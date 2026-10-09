@@ -551,7 +551,7 @@ async function refreshAutoPlaylistInner(canPublish: () => boolean): Promise<Refr
   // Every writer stamps, or the next boundary rebuilds a file already built for
   // this show (#1111).
   autoPlaylistBuild.built(show);
-  return 'refreshed';
+  return reloaded ? 'refreshed' : 'unreloaded';
 }
 
 // ---------------------------------------------------------------------------

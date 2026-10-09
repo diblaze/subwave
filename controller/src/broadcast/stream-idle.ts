@@ -8,6 +8,7 @@ import { gatedListenerCount, refresh, setStreamIdle } from './listeners.js';
 import { idleOn, idleOff, idleStatus } from './liquidsoap-control.js';
 import { queue } from './queue.js';
 import { nextIdleState, type IdleState } from './stream-idle-pure.js';
+import { showKeyAt } from './show-boundary.js';
 
 // One tick every 5s. Live: read the 15s monitor's cached count. Idle: force a
 // fresh poll, so a new listener waits ~5s (worst case ~8s, since the forced
@@ -17,6 +18,11 @@ const TICK_MS = 5000;
 
 // Inject external controls for transition tests; production shares this same
 // monitor. The resume callback is supplied by server to avoid an import cycle.
+export type ResumeInfo = {
+  /** The track frozen by the pause started under a different show than the one on air now. */
+  showChanged: boolean;
+};
+
 export function createStreamIdleMonitor(overrides: Partial<{
   idleStatus: () => Promise<boolean>;
   idleOn: () => Promise<unknown>;
@@ -27,17 +33,40 @@ export function createStreamIdleMonitor(overrides: Partial<{
   setStreamIdle: (idle: boolean) => void;
   warmHeavy: () => Promise<unknown>;
   log: (kind: string, message: string) => void;
-  onResume: () => Promise<void>;
+  showKeyAt: (ms: number) => string;
+  frozenTrackShowKey: () => string | null;
+  onResume: (info: ResumeInfo) => Promise<void>;
 }> = {}) {
   const deps = {
     idleStatus, idleOn, idleOff, refresh, gatedListenerCount, setStreamIdle, warmHeavy,
     streamSettings: () => settings.get()?.stream,
     log: (kind: string, message: string) => queue.log(kind, message),
-    onResume: async () => {},
+    showKeyAt,
+    // queue.json keeps `current` across a controller restart, so this still
+    // answers for a pause the previous process started. A queued pick carries
+    // the show it was chosen for; a track the fallback started does not, and
+    // is judged by when it started.
+    frozenTrackShowKey: () => {
+      const current = queue.current;
+      if (!current) return null;
+      if (current.showKey) return current.showKey;
+      const ms = Date.parse(current.startedAt || '');
+      return Number.isFinite(ms) ? showKeyAt(ms) : null;
+    },
+    onResume: async (_info: ResumeInfo) => {},
     ...overrides,
   };
   let state: IdleState = { idle: false, zeroSince: null };
   let startupReleasePending = false;
+
+  // The track frozen by the pause was chosen for one show; hours later another
+  // can be on air. Asked of the track rather than remembered from the pause,
+  // so a restart mid-pause does not lose it. The same show again after others
+  // (A, B, A) counts as no change: its music still fits.
+  function frozenTrackIsFromAnotherShow() {
+    const key = deps.frozenTrackShowKey();
+    return key !== null && key !== deps.showKeyAt(Date.now());
+  }
 
   // Read by GET /state so the player can tell "nobody's here" from "broken".
   function isIdle() {
@@ -99,10 +128,11 @@ export function createStreamIdleMonitor(overrides: Partial<{
     startupReleasePending = false;
     deps.setStreamIdle(state.idle);
     if (action === 'resume') {
-      // Playback is already live. Catalogue failures must not roll the idle
-      // state back, delay the frozen track, or prevent later monitor ticks.
-      void Promise.resolve().then(() => deps.onResume()).catch(err =>
-        deps.log('error', `Auto-playlist refresh after resume failed: ${err.message}`));
+      // Playback is already live. Failures here must not roll the idle state
+      // back, delay the frozen track, or prevent later monitor ticks.
+      void Promise.resolve()
+        .then(() => deps.onResume({ showChanged: frozenTrackIsFromAnotherShow() }))
+        .catch(err => deps.log('error', `Work after resume failed: ${err.message}`));
     }
   }
 
@@ -139,7 +169,7 @@ export function isIdle() {
   return monitor.isIdle();
 }
 
-export async function startStreamIdleMonitor(onResume: () => Promise<void> = async () => {}) {
+export async function startStreamIdleMonitor(onResume: (info: ResumeInfo) => Promise<void> = async () => {}) {
   monitor = createStreamIdleMonitor({ onResume });
   await monitor.initialize();
   let ticking = false;
