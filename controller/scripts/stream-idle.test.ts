@@ -305,6 +305,63 @@ async function main() {
     assert.equal(flushed, 1);
   });
 
+  // The track frozen by a pause was chosen for the show scheduled when it
+  // started; onResume is told when that is no longer the show on air, so the
+  // caller can drop what was lined up for the earlier one.
+  const STARTED = T0 - 3_600_000;   // the frozen track began an hour before "now"
+  function resumeFromAdoptedPause(
+    showAt: (ms: number) => string,
+    { startedAt = STARTED as number | null, idleOffFailsOnce = false } = {},
+  ) {
+    return (async () => {
+      const realNow = Date.now;
+      Date.now = () => T0;
+      try {
+        let failOff = idleOffFailsOnce;
+        const seen: { showChanged: boolean }[] = [];
+        // idleStatus true: the pause is adopted from the mixer, as after a
+        // controller restart. Nothing in memory says which show it began in.
+        const monitor = createStreamIdleMonitor({
+          idleStatus: async () => true,
+          idleOff: async () => { if (failOff) { failOff = false; throw new Error('telnet down'); } },
+          refresh: async () => {},
+          streamSettings: () => ({ idleWhenEmpty: true, idleAfterMinutes: 1 }),
+          gatedListenerCount: () => 1,
+          setStreamIdle: () => {}, warmHeavy: async () => {}, log: () => {},
+          showKeyAt: showAt,
+          frozenTrackStartedAt: () => startedAt,
+          onResume: async (info) => { seen.push(info); },
+        });
+        await monitor.initialize();
+        await monitor.tick();
+        if (idleOffFailsOnce) await monitor.tick();   // the retry
+        await new Promise(r => setImmediate(r));
+        assert.equal(monitor.isIdle(), false);
+        return seen;
+      } finally {
+        Date.now = realNow;
+      }
+    })();
+  }
+  const nightThenMorning = (ms: number) => (ms < T0 ? 'show:night' : 'show:morning');
+
+  await test('resume reports a frozen track that started under another show', async () => {
+    assert.deepEqual(await resumeFromAdoptedPause(nightThenMorning), [{ showChanged: true }]);
+    assert.deepEqual(await resumeFromAdoptedPause(ms => (ms < T0 ? 'show:night' : 'default')),
+      [{ showChanged: true }], 'into an off-show hour');
+    assert.deepEqual(await resumeFromAdoptedPause(nightThenMorning, { idleOffFailsOnce: true }),
+      [{ showChanged: true }], 'a failed release still reports on the retry');
+  });
+
+  await test('resume in the show the frozen track started under reports no change', async () => {
+    assert.deepEqual(await resumeFromAdoptedPause(() => 'show:night'), [{ showChanged: false }]);
+    assert.deepEqual(await resumeFromAdoptedPause(() => 'default'), [{ showChanged: false }]);
+  });
+
+  await test('with nothing on air there is no frozen track to judge', async () => {
+    assert.deepEqual(await resumeFromAdoptedPause(nightThenMorning, { startedAt: null }), [{ showChanged: false }]);
+  });
+
   process.exit(failures ? 1 : 0);
 }
 

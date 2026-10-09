@@ -4022,6 +4022,52 @@ class Queue {
     return this.removeUpcomingItem(item);
   }
 
+  // What is on air and queued right now, minus requests. Taken the moment the
+  // programme resumes, so that what the new show picks afterwards is never
+  // mistaken for the earlier show's.
+  snapshotProgramme(): { current: QueueItem | null; upcoming: QueueItem[] } {
+    return { current: this.current, upcoming: this.upcoming.filter(i => !i.requestedBy) };
+  }
+
+  // The programme paused in one show and resumed in another (stream-idle.ts).
+  // The frozen track and the picks queued behind it were chosen for the earlier
+  // show: an afternoon floor-filler would otherwise play on into the night
+  // programme. Remove those picks and skip that track. Only what `stale` holds
+  // is touched, and requests are kept and never skipped: someone asked for
+  // those, whatever the hour. The caller rebuilds and reloads the fallback
+  // first, or the skip lands on a track Liquidsoap prefetched from the old one.
+  async dropProgrammeFromEarlierShow(
+    stale: { current: QueueItem | null; upcoming: QueueItem[] },
+    skip: () => Promise<unknown> = liquidsoapControl.skipTrack,
+  ): Promise<{ dropped: number; kept: number; skipped: boolean }> {
+    let dropped = 0;
+    let kept = 0;
+    for (const item of stale.upcoming) {
+      if (!this.upcoming.includes(item)) continue;   // aired or cancelled meanwhile
+      const removed = await this.removeUpcomingItem(item, 'show changed while paused').catch(() => ({ ok: false }));
+      if (removed.ok) dropped += 1;
+      else kept += 1;
+    }
+    // onTrackStarted replaces `current` on every start, so identity tells the
+    // frozen track from one that began while the fallback was rebuilding.
+    let skipped = false;
+    if (stale.current && this.current === stale.current && !stale.current.requestedBy) {
+      try {
+        // A kept request must be committed in dj_queue or the skip airs the fallback instead.
+        await this.commitBeforeSkip();
+        await skip();
+        skipped = true;
+      } catch (err) {
+        this.log('error', `could not skip the track left over from the earlier show: ${(err as Error).message}`);
+      }
+    }
+    this.log('scheduler',
+      `show changed while the programme was paused — dropped ${dropped} queued pick(s)`
+      + (kept ? `, ${kept} already with the mixer and will still air` : '')
+      + (skipped ? ', skipped the leftover track' : ''));
+    return { dropped, kept, skipped };
+  }
+
   // The cancel itself, addressed by ITEM rather than by track id.
   //
   // Split out for the block cancel (#1622 FR 4), which holds the exact items it

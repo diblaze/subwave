@@ -17,7 +17,8 @@ import * as chatterbox from './audio/chatterbox.js';
 import * as pocketTts from './audio/pocketTts.js';
 import { getFullContext } from './context.js';
 import { loadCuriosityLedger } from './skills/curiosity.js';
-import { startScheduler, flushPendingAutoPlaylist } from './broadcast/scheduler.js';
+import { startScheduler, flushPendingAutoPlaylist, refreshAutoPlaylist } from './broadcast/scheduler.js';
+import { reloadAutoPlaylist } from './broadcast/liquidsoap-control.js';
 import * as geminiTts from './audio/gemini.js';
 import * as geminiLibrary from './audio/gemini-library.js';
 import { startListenerMonitor } from './broadcast/listeners.js';
@@ -308,7 +309,20 @@ app.listen(config.server.port, async (err?: Error) => {
   // every restart (#1256). Bounded internally, so never a boot hang.
   await startListenerMonitor();
   queue.startWatcher();
-  await startStreamIdleMonitor(flushPendingAutoPlaylist);
+  await startStreamIdleMonitor(async ({ showChanged }) => {
+    if (!showChanged) return flushPendingAutoPlaylist();
+    // Before any await: the new show may start picking while the fallback rebuilds.
+    const stale = queue.snapshotProgramme();
+    // The skip must land on the new show's fallback. Liquidsoap holds one
+    // prefetched request from the old list until a reload drops it, so do
+    // nothing unless the rebuild and the reload both went through.
+    const rebuilt = await refreshAutoPlaylist({ automatic: true });
+    if (rebuilt !== 'refreshed' || !(await reloadAutoPlaylist())) {
+      queue.log('scheduler', 'show changed while the programme was paused — fallback not rebuilt, leaving the queue as it is');
+      return;
+    }
+    await queue.dropProgrammeFromEarlierShow(stale);
+  });
   startAudienceMonitor().catch(err => console.error('[audience] init failed:', err.message));
   // Up front so the sync readers see data from the first pick.
   await likes.load().catch(err => console.error('[likes] init failed:', err.message));
