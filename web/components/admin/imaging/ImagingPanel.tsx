@@ -51,7 +51,7 @@ export default function ImagingPanel() {
   const voicesQuery = useVoicesQuery(adminFetch, enabled);
   const data = useMemo(
     () => settingsQuery.data
-      ? { ...settingsQuery.data, jingles: jinglesQuery.data?.jingles }
+      ? { ...settingsQuery.data, jingles: jinglesQuery.data?.jingles, talkPool: jinglesQuery.data?.talkPool }
       : null,
     [settingsQuery.data, jinglesQuery.data],
   );
@@ -152,6 +152,35 @@ export default function ImagingPanel() {
       notify.err(`Jingle creation failed: ${errorMessage(e)}`);
       return { ok: false, fieldErrors: mutationFieldErrors(e) };
     } finally { setBusy(false); }
+  };
+
+  // Rendering runs behind the 202; the 3s jingles poll shows the count climb.
+  const renderTalkPool = async (personaId: string) => {
+    setBusy(true);
+    try {
+      await resourceMutation.mutateAsync({
+        path: '/talk-pool/render',
+        init: {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ personaId }),
+        },
+        key: imagingKeys.jingles(),
+      });
+    } catch (e) { notify.err(`Render failed: ${errorMessage(e)}`); }
+    finally { setBusy(false); }
+  };
+
+  const clearTalkPool = async (personaId: string) => {
+    setBusy(true);
+    try {
+      await resourceMutation.mutateAsync({
+        path: `/talk-pool/${encodeURIComponent(personaId)}`,
+        init: { method: 'DELETE' },
+        key: imagingKeys.jingles(),
+      });
+    } catch (e) { notify.err(`Clear failed: ${errorMessage(e)}`); }
+    finally { setBusy(false); }
   };
 
   const deleteJingle = async (filename: string) => {
@@ -415,6 +444,7 @@ export default function ImagingPanel() {
               jingleRatio={jingleRatio ?? ''} setJingleRatio={setJingleRatio}
               createJingle={createJingle} uploadJingle={uploadJingle}
               saveSettings={saveSettings}
+              renderTalkPool={renderTalkPool} clearTalkPool={clearTalkPool}
               onDelete={setConfirmDelete} adminFetch={adminFetch}
             />
           ) : (

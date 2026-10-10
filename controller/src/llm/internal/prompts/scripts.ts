@@ -191,7 +191,7 @@ export async function generateIntro({ track, context, requestedBy = null, reques
   });
 }
 
-export function stationIdPrompt({ context = null, persona = null }: any = {}) {
+export function stationIdPrompt({ context = null, persona = null, timeless = false }: any = {}) {
   const speaker = persona || settings.getEffectivePersona();
   const djName = speaker?.name || 'your host';
   const stationName = settings.get().station;
@@ -209,13 +209,17 @@ export function stationIdPrompt({ context = null, persona = null }: any = {}) {
   // the Local time line while still telling the model to nod at the clock is
   // how you get an invented one (broadcast/clock-policy.ts).
   const daypart = context?.clock?.spokenDaypart;
-  const clockNudge = speakClockAllowed()
+  // A pooled ident (broadcast/talk-pool.ts) is recorded once and replayed on any
+  // day, so it gets no context and is told to stay off everything that dates it.
+  const clockNudge = timeless
+    ? ' Never mention the time of day, the day, the date, the season, the weather, listener numbers, a song or any show — this line is recorded once and replayed on any day.'
+    : speakClockAllowed()
     ? (daypart
         ? ` If you nod to the clock, say only "${daypart}" — never the hour and never the minutes (this airs a few minutes after you write it, and the hour may have changed by then).`
         : ` If you nod to the clock, name only the part of the day (morning, afternoon, evening, night) — never the hour and never the minutes (this airs a few minutes after you write it, and the hour may have changed by then).`)
     : '';
   const handover = context?.showHandover;
-  const nextShow = handover?.phase === 'final-quarter-hour'
+  const nextShow = !timeless && handover?.phase === 'final-quarter-hour'
     && handover?.nextShow?.name && handover?.nextShow?.presenter;
   const handoverNudge = nextShow
     ? ` ${String(handover.nextShow.presenter).trim()} presents the next scheduled show, "${String(handover.nextShow.name).trim()}". If natural, give it one brief nod; never describe it as your own show, make it a required signpost, or explain the schedule.`
@@ -224,11 +228,11 @@ export function stationIdPrompt({ context = null, persona = null }: any = {}) {
   return ctxLines.join('\n');
 }
 
-export async function generateStationId({ recap = null, context = null, recentOpeners = null, persona = null }: any = {}) {
+export async function generateStationId({ recap = null, context = null, recentOpeners = null, persona = null, timeless = false }: any = {}) {
   const speaker = persona || settings.getEffectivePersona();
   return djText({
     system: djSystem(speaker),
-    prompt: decoratePrompt(stationIdPrompt({ context, persona: speaker }), { kind: 'station_id', recap, recentOpeners }),
+    prompt: decoratePrompt(stationIdPrompt({ context, persona: speaker, timeless }), { kind: 'station_id', recap, recentOpeners }),
     temperature: 1.0, topP: 0.9, repeatPenalty: 1.25, seed: randomSeed(),
     kind: 'generateStationId',
   });

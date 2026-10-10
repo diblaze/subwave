@@ -2,11 +2,13 @@
 // kick-off endpoint for the background library tagger.
 import express from 'express';
 import * as jingles from '../broadcast/jingles.js';
+import * as talkPool from '../broadcast/talk-pool.js';
+import * as settings from '../settings.js';
 import { queue } from '../broadcast/queue.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { audioUpload } from '../middleware/upload.js';
 import { validateBody } from '../middleware/validate.js';
-import { jingleCreateSchema, jingleImportSchema } from '../schemas/imaging.js';
+import { jingleCreateSchema, jingleImportSchema, talkPoolRenderSchema } from '../schemas/imaging.js';
 import { sendAudioFile } from '../util/audio-response.js';
 import { tagger, startTagger, stopTagger } from '../broadcast/tagger.js';
 
@@ -14,7 +16,7 @@ export const router = express.Router();
 
 router.get('/jingles', requireAdmin, async (req, res) => {
   try {
-    res.json({ jingles: await jingles.list() });
+    res.json({ jingles: await jingles.list(), talkPool: await talkPool.counts() });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -26,6 +28,26 @@ router.post('/jingles', requireAdmin, validateBody(jingleCreateSchema), async (r
     const created = await jingles.create(text);
     queue.log('scheduler', `New jingle created: "${text.slice(0, 60)}…"`);
     res.json(created);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Pre-rendered station idents (settings.talkSource). Rendering takes a few
+// seconds a clip, so it runs behind the response; GET /jingles carries the counts.
+router.post('/talk-pool/render', requireAdmin, validateBody(talkPoolRenderSchema), (req, res) => {
+  const { personaId } = req.body as { personaId: string };
+  const persona = settings.resolvePersonaById(personaId);
+  if (!persona) return res.status(404).json({ error: 'unknown persona' });
+  void talkPool.render(persona, talkPool.TALK_POOL_BATCH, msg => queue.log('scheduler', msg));
+  res.status(202).json({ ok: true });
+});
+
+router.delete('/talk-pool/:personaId', requireAdmin, async (req, res) => {
+  try {
+    const removed = await talkPool.clear(req.params.personaId);
+    if (removed === null) return res.status(409).json({ error: 'still rendering for this persona' });
+    res.json({ removed });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

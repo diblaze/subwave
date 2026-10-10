@@ -18,6 +18,7 @@ import {
   JINGLE_RATIO_BOUNDS,
   JINGLE_ROTATE_OWNERS,
   JINGLE_TEXT_MAX,
+  TALK_SOURCES,
   jingleCreateSchema,
   jingleImportSchema,
   jingleRatioSchema,
@@ -40,6 +41,8 @@ interface JinglesSectionProps {
     label: string | undefined,
     opts?: { onProgress?: (done: number, total: number) => void; signal?: AbortSignal },
   ) => Promise<JingleImportResult | null>;
+  renderTalkPool: (personaId: string) => Promise<void>;
+  clearTalkPool: (personaId: string) => Promise<void>;
   onDelete: (filename: string | null) => void;
   adminFetch: (path: string, init?: RequestInit) => Promise<Response>;
 }
@@ -270,7 +273,7 @@ function JingleImportModal({
 
 export function JinglesSection({
   data, busy, jingleRatio, setJingleRatio,
-  createJingle, uploadJingle, saveSettings, onDelete, adminFetch,
+  createJingle, uploadJingle, saveSettings, renderTalkPool, clearTalkPool, onDelete, adminFetch,
 }: JinglesSectionProps) {
   const ratioRaw = data.values?.jingleRatio;
   const ratioDirty = jingleRatio !== String(ratioRaw);
@@ -280,6 +283,8 @@ export function JinglesSection({
   // click like every other toggle. Un-hydrated reads as the default, which is
   // also what an older controller (no key in /settings) answers.
   const rotateOwner = data.values?.jingleRotate === 'controller' ? 'controller' : 'mixer';
+  const talkSource = TALK_SOURCES.find(id => id === data.values?.talkSource) ?? 'live';
+  const talkPool = data.talkPool || [];
   const jingles = data.jingles || [];
   const [modal, setModal] = useState<null | 'create' | 'import'>(null);
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
@@ -371,6 +376,42 @@ export function JinglesSection({
             while and you&rsquo;ll hear twice the jingles.
           </p>
         </div>
+      </PanelBox>
+
+      <PanelBox>
+        <PanelHead label="station idents" />
+        <div className="flex flex-wrap items-center gap-5 px-[18px] py-[18px]">
+          <div className="flex flex-wrap items-center gap-2.5 sm:flex-none">
+            <span className="font-mono text-[13px]">spoken</span>
+            <Seg
+              value={talkSource}
+              aria-label="Where scheduled station idents come from"
+              options={TALK_SOURCES.map(id => ({
+                id,
+                label: id === 'live' ? 'Live' : id === 'mix' ? 'Mix' : 'Pre-rendered',
+              }))}
+              onChange={(id) => {
+                if (busy || id === talkSource) return;
+                void saveSettings({ talkSource: id });
+              }}
+            />
+          </div>
+          <p className="m-0 min-w-[220px] flex-1 text-[12px] leading-[1.55] text-muted">
+            Live writes and voices every ident as it airs. Pre-rendered draws one recorded
+            ahead for the host on air, and Mix does half of each. The hourly time check,
+            banter and segments are always live. A host with no clips goes live.
+          </p>
+        </div>
+        {talkPool.map(p => (
+          <div key={p.personaId} className="flex flex-wrap items-center gap-3 border-t border-separator-soft px-[18px] py-3">
+            <span className="min-w-[120px] font-mono text-[13px]">{p.personaName}</span>
+            <span className="flex-1 font-mono text-[12px] text-muted">
+              {pad2(p.count)} clips{p.rendering ? ' · rendering…' : ''}
+            </span>
+            <Btn sm onClick={() => void renderTalkPool(p.personaId)} disabled={busy || p.rendering}>Render 10</Btn>
+            <Btn sm tone="danger" onClick={() => void clearTalkPool(p.personaId)} disabled={busy || p.rendering || p.count === 0}>Clear</Btn>
+          </div>
+        ))}
       </PanelBox>
 
       <PanelBox>

@@ -379,6 +379,11 @@ export const jingleCreateSchema = z.object({
     .max(JINGLE_TEXT_MAX, `text too long (max ${JINGLE_TEXT_MAX})`),
 });
 
+// POST /talk-pool/render — pre-render station idents for one persona.
+export const talkPoolRenderSchema = z.object({
+  personaId: z.string({ error: 'personaId is required' }).min(1, 'personaId is required'),
+});
+
 // The multipart import bodies. Must sit AFTER audioUpload in the route chain:
 // multer parses the multipart body into req.body, and validateBody replaces
 // req.body only — req.file rides through untouched.
@@ -2795,6 +2800,20 @@ export const JINGLE_ROTATE_OWNERS = ['mixer', 'controller'] as const;
 export type JingleRotateOwner = (typeof JINGLE_ROTATE_OWNERS)[number];
 export const jingleRotateSchema = z.enum(JINGLE_ROTATE_OWNERS, {
   error: `jingleRotate must be one of ${JINGLE_ROTATE_OWNERS.join(', ')}`,
+});
+
+/**
+ * WHERE a scheduled station ident comes from.
+ *
+ * `'live'` writes and renders it when it airs. `'pool'` draws a clip rendered
+ * ahead of time for the on-air persona (broadcast/talk-source.ts) and reaches
+ * no LLM or TTS engine; `'mix'` does either, half and half. Everything that
+ * needs the clock, the track or fresh data stays live in every mode.
+ */
+export const TALK_SOURCES = ['live', 'mix', 'pool'] as const;
+export type TalkSource = (typeof TALK_SOURCES)[number];
+export const talkSourceSchema = z.enum(TALK_SOURCES, {
+  error: `talkSource must be one of ${TALK_SOURCES.join(', ')}`,
 });
 
 export const sfxPatchSchema = settingsBlockOf({

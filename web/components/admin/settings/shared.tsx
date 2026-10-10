@@ -14,7 +14,7 @@ import { Btn, Eyebrow, Metric } from '../ui';
 import { useSectionChrome, useReportDirty } from './section-chrome';
 import { Button } from '../../ui/button';
 import { FieldError } from '../../ui/field';
-import type { TransitionEffect, JingleRotateOwner, GeminiSafety } from '../../../lib/schemas.generated';
+import type { TransitionEffect, JingleRotateOwner, TalkSource, GeminiSafety } from '../../../lib/schemas.generated';
 export type { TransitionEffect } from '../../../lib/schemas.generated';
 
 export const KEY_HINTS: Record<string, string> = {
@@ -386,6 +386,9 @@ export interface FormState {
   requests: RequestsForm;
 }
 
+/** One persona's pre-rendered station idents (GET /jingles). */
+export interface TalkPoolEntry { personaId: string; personaName: string; count: number; rendering?: boolean }
+
 export interface JingleEntry {
   filename: string;
   text?: string;
@@ -403,6 +406,8 @@ export interface SettingsData {
      *  mirrored schema rather than being respelled here, so a value added to it
      *  reaches this form. */
     jingleRotate?: JingleRotateOwner;
+    /** Where scheduled station idents come from. Absent reads as 'live'. */
+    talkSource?: TalkSource;
     crossfadeDuration?: number;
     ducking?: { voice?: number; intro?: number };
     maxTrackSeconds?: number;
@@ -569,6 +574,7 @@ export interface SettingsData {
     locale?: StationLocale;
   };
   jingles?: JingleEntry[];
+  talkPool?: TalkPoolEntry[];
   libraryStats?: {
     total?: number;
     withEmbedding?: number;

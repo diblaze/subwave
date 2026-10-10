@@ -4,9 +4,9 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import { adminJson, type AdminFetch } from '@/lib/admin-query';
 import { useAdminQuery } from '@/lib/admin-query';
 import type { BedsData, SfxData, VoiceData } from './types';
-import type { JingleEntry } from '../settings/shared';
+import type { JingleEntry, TalkPoolEntry } from '../settings/shared';
 
-export interface JinglesData { jingles?: JingleEntry[] }
+export interface JinglesData { jingles?: JingleEntry[]; talkPool?: TalkPoolEntry[] }
 
 export const imagingKeys = {
   all: ['imaging'] as const,
