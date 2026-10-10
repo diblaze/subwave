@@ -2339,8 +2339,8 @@ class Queue {
   async announce(
     text,
     kind = 'announcement',
-    { persona = null, meta = {}, pauseTalkEligible = false, sfx: selectedSfx = null, hostSpeech = null }:
-      { persona?: Persona | null; meta?: TurnMeta; pauseTalkEligible?: boolean; sfx?: string | null; hostSpeech?: HostSpeechStamp | null } = {},
+    { persona = null, meta = {}, pauseTalkEligible = false, sfx: selectedSfx = null, hostSpeech = null, prerendered = null }:
+      { persona?: Persona | null; meta?: TurnMeta; pauseTalkEligible?: boolean; sfx?: string | null; hostSpeech?: HostSpeechStamp | null; prerendered?: string | null } = {},
   ): Promise<AnnounceOutcome> {
     // Single-voice paths leak the label too — a styled POST /dj/say came back as
     // "Iris : Bonsoir…" with one persona and one voice (#1707).
@@ -2364,7 +2364,8 @@ class Queue {
       return { accepted: false, deferred: false, completed: Promise.resolve(false) };
     }
     try {
-      const wavPath = await this._speak(safeText, { kind, persona });
+      // `prerendered` is a clip already on disk (talk-pool.ts): no engine is reached.
+      const wavPath = prerendered ?? await this._speak(safeText, { kind, persona });
       if (hostSpeech && !session.isHostSpeechCurrent(hostSpeech)) {
         return { accepted: false, deferred: false, completed: Promise.resolve(false) };
       }
@@ -2595,7 +2596,7 @@ class Queue {
   // here. All bookkeeping (djLog → recap/opener anti-repeat, session turn,
   // webhook) happens at AIR time, so the DJ's memory reflects what reached the
   // stream, not what was merely scheduled.
-  async announceAtNextTrack(text, kind = 'announcement', { persona = null, meta = {}, daypart = null, hostSpeech = null }: { persona?: Persona | null; meta?: TurnMeta; daypart?: string | null; hostSpeech?: HostSpeechStamp | null } = {}) {
+  async announceAtNextTrack(text, kind = 'announcement', { persona = null, meta = {}, daypart = null, hostSpeech = null, prerendered = null }: { persona?: Persona | null; meta?: TurnMeta; daypart?: string | null; hostSpeech?: HostSpeechStamp | null; prerendered?: string | null } = {}) {
     // Scheduled segments reach _speak through here too, so they need the same
     // guard as announce(): a label the model prefixed would otherwise be read
     // aloud. Same speaker resolution, for the same reason.
@@ -2610,7 +2611,7 @@ class Queue {
       return;
     }
     try {
-      const wavPath = await this._speak(safeText, { kind, persona });
+      const wavPath = prerendered ?? await this._speak(safeText, { kind, persona });
       if (hostSpeech && !session.isHostSpeechCurrent(hostSpeech)) return;
       if (suppressScheduledSpeechDuringHandoff(kind, session.handoffInProgress())) {
         this.log('scheduler', `Dropped ${kind} — the show handoff completed while it rendered`);

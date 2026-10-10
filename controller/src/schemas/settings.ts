@@ -559,6 +559,20 @@ export const jingleRotateSchema = z.enum(JINGLE_ROTATE_OWNERS, {
   error: `jingleRotate must be one of ${JINGLE_ROTATE_OWNERS.join(', ')}`,
 });
 
+/**
+ * WHERE a scheduled station ident comes from.
+ *
+ * `'live'` writes and renders it when it airs. `'pool'` draws a clip rendered
+ * ahead of time for the on-air persona (broadcast/talk-source.ts) and reaches
+ * no LLM or TTS engine; `'mix'` does either, half and half. Everything that
+ * needs the clock, the track or fresh data stays live in every mode.
+ */
+export const TALK_SOURCES = ['live', 'mix', 'pool'] as const;
+export type TalkSource = (typeof TALK_SOURCES)[number];
+export const talkSourceSchema = z.enum(TALK_SOURCES, {
+  error: `talkSource must be one of ${TALK_SOURCES.join(', ')}`,
+});
+
 export const sfxPatchSchema = settingsBlockOf({
   enabled: settingsBoolLike(),
 });
