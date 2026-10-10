@@ -21,6 +21,7 @@ import {
   LOUDNESS_TARGET_LUFS_BOUNDS,
   normalizeGeminiSafety,
   type JingleRotateOwner,
+  type TalkSource,
 } from '../schemas/settings.js';
 import { SHOW_MAX_TRACK_SECONDS, SHOW_MIN_TRACK_LENGTH_MAX } from '../schemas/show.js';
 import { DEFAULT_THEME_ID } from '../themes.js';
@@ -48,6 +49,9 @@ export const DEFAULTS = {
   // rather than the only mode. Needs a mixer restart either way — the ratio
   // file is read once at startup.
   jingleRotate: 'mixer' as JingleRotateOwner,
+  // Scheduled station idents: written live, drawn from the pre-rendered pool,
+  // or half and half. See broadcast/talk-source.ts.
+  talkSource: 'live' as TalkSource,
   crossfadeDuration: 10.0, // seconds
   // How far the music drops under each spoken layer — `smooth_add`'s `p`, so
   // the number is what is LEFT UP, not the cut: 0.22 is ~-13 dB, 0.30 is ~-10.
