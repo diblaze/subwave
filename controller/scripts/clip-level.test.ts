@@ -36,6 +36,7 @@ test('a quiet take is lifted and a hot one pulled back, both within the cap', ()
   assert.equal(trimDbFor(-45), VOICE_TRIM_MAX_DB);
   assert.equal(trimDbFor(0), -VOICE_TRIM_MAX_DB);
   assert.equal(trimDbFor(null), 0, 'an unmeasured clip airs as it always did');
+  assert.equal(trimDbFor(-23, -14), 9, 'a jingle is levelled to the music target it sits among');
 });
 
 test('an unreadable clip is unmeasured, never an error', async () => {

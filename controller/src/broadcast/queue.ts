@@ -19,6 +19,7 @@ import * as blocklist from '../music/blocklist.js';
 import { artistRootKey, trackKey, type CandidateLike } from '../music/recency.js';
 import { albumKeyFor } from '../music/album-facts.js';
 import { speak, voiceGainDb } from '../audio/tts.js';
+import { measureClipLevel, trimDbFor } from '../audio/clip-level.js';
 import {
   writeSilentWav,
   discardSilentWav,
@@ -3270,7 +3271,11 @@ class Queue {
     if (inFlight >= (rotate ? PENDING_ROTATE_JINGLE_MAX : PENDING_JINGLE_MAX)) {
       return { ok: false as const, reason: 'queue-full' as const };
     }
-    await writeHandoff(config.liquidsoap.jingleFile, jingles.jingleUri(path), { maxWaitMs: 5000 });
+    // A jingle sits on the MUSIC timeline, so it is levelled to the music's
+    // target, not the voices': a TTS stinger renders some 9 dB under a
+    // normalised track and all but vanished between two of them.
+    const jingleTrim = trimDbFor(await measureClipLevel(path), settings.get().loudness?.targetLufs);
+    await writeHandoff(config.liquidsoap.jingleFile, jingles.jingleUri(path, jingleTrim), { maxWaitMs: 5000 });
     this._pendingJingles.set(filename, { at: Date.now(), rotate });
     // The sidecar's own script, not the hashed filename: every other segment
     // turn in the booth log and the DJ's chat history carries prose, and

@@ -517,6 +517,7 @@ def dj_transition(a, b) =
   # the `b` gestures on seams where the outgoing one used to suppress them.
   boundary_fading = a.metadata["liq_show_fade"] == "true"
   jingle_out = a.metadata["subwave_jingle"] == "true"
+  jingle_in = b.metadata["subwave_jingle"] == "true"
   washing = a.metadata["liq_washout"] == "true" and not boundary_fading
   looping = a.metadata["liq_loop"] == "true" and not washing and not boundary_fading
   sweeping = b.metadata["liq_sweep"] == "true" and not looping and not boundary_fading and not jingle_out
@@ -1081,7 +1082,23 @@ def dj_transition(a, b) =
     else
       b_source
     end
-  strip_cross_stamps(add(normalize=false, [a_source, b_source]))
+  # A JINGLE IS NEVER BLENDED. cross sizes this buffer from the SHORTER side, so
+  # for a three-second stinger `d` is the stinger's whole length: summed, it
+  # aired as nothing but its own fade-in under the outgoing track, reaching full
+  # level on its last sample (rendered: -57 dB rising to -34 dB against a -33 dB
+  # track). The outgoing track fades over the same buffer as before and the
+  # stinger then plays dry, start to finish. A stinger long enough to have a
+  # tail of its own hands over the same way, with no fade across its last words.
+  # scripts/fx-render-test.sh jingledry lifts this block and renders it.
+  seam =
+    if jingle_in then
+      (sequence([a_source, b.source]) : source)
+    elsif jingle_out then
+      (sequence([a.source, b.source]) : source)
+    else
+      add(normalize=false, [a_source, b_source])
+    end
+  strip_cross_stamps(seam)
 end
 
 # The PRE-cross handle for the on_metadata hook attached further down. Hooking

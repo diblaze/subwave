@@ -27,6 +27,10 @@
 #       Regression check — on A -> jingle -> B, B's entry gesture must stand
 #       down on the jingle's seam yet still arm on a direct A -> B seam. Lifts
 #       the arming lines, the jingle mark and the cross stamps from radio.liq.
+#   scripts/fx-render-test.sh jingledry
+#       Regression check — a stinger shorter than the crossfade must air dry at
+#       full level, not as its own fade-in under the outgoing track. Lifts the
+#       seam block and the jingle mark from radio.liq.
 #
 # Output lands in .fx-render/ next to this script (gitignored).
 
@@ -792,13 +796,65 @@ LIQ
   echo "JINGLESEAM PASS — the jingle's seam is a plain fade; the direct seam still arms B's sweep"
 }
 
+jingledry() {
+  # A stinger shorter than the crossfade used to air as nothing but its own
+  # fade-in under the outgoing track. The seam block is LIFTED from radio.liq;
+  # the render must show the stinger at full level from its first 400 ms and
+  # the outgoing track gone by then.
+  gen_tones
+  [ -f "$WORK/j.wav" ] || ffmpeg -v error -y -f lavfi -i "sine=frequency=1000:duration=2.8" -af volume=-12dB -ar 44100 -ac 2 "$WORK/j.wav"
+  awk '/^  seam =$/{on=1} on{print} on&&/^    end$/{exit}' "$HERE/../liquidsoap/radio.liq" > "$WORK/jdry-seam.liq"
+  local mark
+  mark=$(grep -m1 -oE 'metadata\.map\(update=true, fun \(_\) -> \[\("subwave_jingle", "true"\)\]' "$HERE/../liquidsoap/radio.liq")
+  grep -q "jingle_in" "$WORK/jdry-seam.liq" && [ -n "$mark" ] \
+    || { echo "JINGLEDRY FAIL — could not lift the seam block / jingle mark from radio.liq"; return 1; }
+  {
+    cat <<'LIQ'
+settings.log.stdout := true
+settings.log.level := 2
+sa = once(single('annotate:title="A":/work/a.wav'))
+sb = once(single('annotate:title="B":/work/b.wav'))
+sj = once(single('annotate:title="J":/work/j.wav'))
+LIQ
+    echo "jingle = ${mark}, sj)"
+    cat <<'LIQ'
+music = sequence([sa, jingle, sb])
+def t(a, b) =
+  jingle_out = a.metadata["subwave_jingle"] == "true"
+  jingle_in = b.metadata["subwave_jingle"] == "true"
+  d = min(source.remaining(a.source), source.remaining(b.source))
+  a_source = fade.out(duration=d, initial_metadata=a.metadata, a.source)
+  b_source = fade.in(duration=d, initial_metadata=b.metadata, b.source)
+%include "/work/jdry-seam.liq"
+  seam
+end
+music = cross(duration=10., persist_override=true, t, music)
+output.file(%wav, fallible=true, on_stop=shutdown, "/work/jdry.wav", music)
+clock.assign_new(sync="none", [music])
+LIQ
+  } > "$WORK/jdry.liq"
+  liq jdry.liq > "$WORK/jdry.log" || { cat "$WORK/jdry.log"; return 1; }
+  band() { # band <freq> <start> — mean level of one tone over 400 ms, whole dB
+    ffmpeg -v info -ss "$2" -t 0.4 -i "$WORK/jdry.wav" -af "bandpass=f=$1:width_type=h:w=60,volumedetect" -f null - 2>&1 \
+      | sed -n 's/.*mean_volume: \(-\{0,1\}[0-9]*\).*/\1/p'
+  }
+  # A is 12 s; its tail fades over the stinger's 2.8 s, then the stinger runs 12.0 -> 14.8.
+  local head mid under
+  head=$(band 1000 12.0); mid=$(band 1000 13.2); under=$(band 440 12.0)
+  echo "jingle head ${head} dB, middle ${mid} dB, outgoing under it ${under} dB"
+  [ -n "$head" ] && [ -n "$mid" ] && [ $((mid - head)) -le 1 ] && [ $((head - under)) -ge 15 ] \
+    || { echo "JINGLEDRY FAIL — the stinger is still being faded in under the outgoing track"; return 1; }
+  echo "JINGLEDRY PASS — the stinger airs dry at full level after the outgoing track's fade"
+}
+
 case "${1:-}" in
   probe)  probe ;;
   render) shift; render "$@" ;;
   loopcheck) loopcheck ;;
   loopgaps) loopgaps ;;
   jingleseam) jingleseam ;;
+  jingledry) jingledry ;;
   xdur)   xdur ;;
   xchain) xchain ;;
-  *) echo "usage: $0 probe | render <a-audio> <b-audio> [dry|sweep|washout|both|blend|dissolve|chop|loop|all] | loopcheck | loopgaps | jingleseam | xdur | xchain"; exit 2 ;;
+  *) echo "usage: $0 probe | render <a-audio> <b-audio> [dry|sweep|washout|both|blend|dissolve|chop|loop|all] | loopcheck | loopgaps | jingleseam | jingledry | xdur | xchain"; exit 2 ;;
 esac
