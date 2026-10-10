@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs';
 import crypto from 'node:crypto';
 import { extname } from 'node:path';
 import { speak } from '../audio/tts.js';
+import { measureClipLevel } from '../audio/clip-level.js';
 import { config, STATE_DIR } from '../config.js';
 import * as settings from '../settings.js';
 import * as dj from '../llm/dj.js';
@@ -97,6 +98,8 @@ export async function draw(persona: PoolPersona | null | undefined): Promise<{ t
   await mkdir(config.piper.outDir, { recursive: true });
   const wavPath = `${config.piper.outDir}/pool_${crypto.randomBytes(6).toString('hex')}${extname(clip.filename)}`;
   await copyFile(`${DIR}/${clip.filename}`, wavPath);
+  // The copy is a new path, so it is measured again for the handoff's trim.
+  await measureClipLevel(wavPath);
   return { text: clip.text, wavPath };
 }
 

@@ -4,6 +4,7 @@
 import * as piper from './piper.js';
 import * as kokoro from './kokoro.js';
 import { applyEdgeFades } from './wav-edges.js';
+import { measureClipLevel } from './clip-level.js';
 import * as chatterbox from './chatterbox.js';
 import * as pocketTts from './pocketTts.js';
 import { heavyColdEngines, heavyEnabledEngines } from './ttsHeavyClient.js';
@@ -414,7 +415,7 @@ export async function speakExchange(
   const started = Date.now();
   try {
     const result = await gemini.speakMulti(geminiLines, { outPath, model });
-    if (typeof result === 'string') await applyEdgeFades(result);
+    if (typeof result === 'string') await finishClip(result);
     const combinedText = lines.map((l) => `${l.persona?.name || 'DJ'}: ${l.text}`).join('\n').slice(0, 240);
     recordTts({
       kind, requested: 'gemini', chars: combinedText.length,
@@ -433,6 +434,13 @@ export async function speakExchange(
     });
     throw err;
   }
+}
+
+// Every rendered clip, whichever engine made it: edge fades (WAV only), then
+// its level, measured once here so the handoff to the mixer can trim it.
+async function finishClip(path: string): Promise<void> {
+  await applyEdgeFades(path);
+  await measureClipLevel(path);
 }
 
 // Public entry point. Tries the configured engine; on failure falls back so the
@@ -502,7 +510,7 @@ export async function speak(
     // Bake 40ms edge fades in so hard file boundaries never reach the broadcast
     // compressor as a click. Render time is the only place the tail can be
     // faded. Best-effort: non-WAV output (cloud mp3) is left as-is.
-    if (typeof result === 'string') await applyEdgeFades(result);
+    if (typeof result === 'string') await finishClip(result);
     recordTts({
       ...callBase, engine: primary, fellBack: primaryFellBack,
       ok: true, ms: Date.now() - started, t: new Date().toISOString(),
@@ -531,7 +539,7 @@ export async function speak(
         // slot's own override (null for hardcoded rungs, the operator's
         // engine+voice for their configured one), so probe and call agree.
         const result = await speakWith(fallback, rescueText, { outPath, speedScale: scale, language, soul, voiceStyle }, slot.personaTts);
-        if (typeof result === 'string') await applyEdgeFades(result);
+        if (typeof result === 'string') await finishClip(result);
         recordTts({
           ...callBase, engine: fallback, fellBack: true,
           ok: true, ms: Date.now() - started, t: new Date().toISOString(),

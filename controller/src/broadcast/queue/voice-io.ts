@@ -10,6 +10,7 @@ import * as settings from '../../settings.js';
 import { sleep, type Interposed } from './pure.js';
 import { awaitVoiceAir } from './voice-marker.js';
 import { mpegLayer3Frame, mp3FrameOffset } from '../../audio/mp3-frames.js';
+import { levelTrimDb } from '../../audio/clip-level.js';
 
 const _handoffChains: Map<string, Promise<void>> = new Map();
 
@@ -144,7 +145,8 @@ export async function airVoice(
   const clipMs = clipDurationMs(wavPath, text);
   const holdMs = Math.min(VOICE_HOLD_MAX_MS, clipMs + VOICE_LEADIN_MS + VOICE_TAIL_MS);
   const voiceId = stableVoiceId || mintVoiceId();
-  const uri = voiceUri(wavPath, gainDb, voiceId, pauseDeliveryId);
+  // The operator's gain plus this take's own trim toward the common voice level.
+  const uri = voiceUri(wavPath, Math.round((gainDb + levelTrimDb(wavPath)) * 10) / 10, voiceId, pauseDeliveryId);
   const now = Date.now();
   const jingle = jingleWindow();
   const { waitMs, estimatedAirInMs } = airInEstimate({
