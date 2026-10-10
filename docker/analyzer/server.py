@@ -60,10 +60,10 @@ ANALYZE_CONCURRENCY = _bounded_int_env("ANALYZE_CONCURRENCY", 1, 1, 8)
 # Idle worker recycle (#1204 follow-up). The worker's own idle release drops
 # the CLAP/Demucs singletons, but ~1GB of librosa/numba/torch scratch stays
 # resident — restarting the worker is the only full reclaim. After this many
-# seconds with no HEAVY use (lean bpm/key traffic doesn't count, same clock as
-# the worker's release) the shim terminates it and run() respawns. Default
-# sits above the worker's largest release window so the cheap release always
-# fires first; 0 disables.
+# seconds without a request of any kind (a lean bpm/key pass holds ~500MB of
+# that scratch too) the shim terminates it and run() respawns. Default sits
+# above the worker's largest release window so the cheap release always fires
+# first; 0 disables.
 _RECYCLE_ENV = os.environ.get("ANALYZE_RECYCLE_IDLE_S", "").strip()
 try:
     RECYCLE_IDLE_S = float(_RECYCLE_ENV) if _RECYCLE_ENV else 3600.0
@@ -129,6 +129,10 @@ class StdioWorker:
         # best-effort — set on a heavy completion, cleared when the worker's
         # idle-release log line goes by (_pump_stderr) or the worker restarts.
         self.last_heavy: float | None = None
+        # Monotonic time of the last completed request of any kind. The recycle
+        # clock: a lean bpm/key pass loads no models but still leaves ~500MB of
+        # librosa/numba scratch resident, and only a respawn returns it.
+        self.last_use: float | None = None
         self.models_resident = False
         self.recycles = 0
         # Capabilities the worker advertised at ready but LOST when the model
@@ -213,9 +217,10 @@ class StdioWorker:
         await self._set_ready(False)
         self.proc = None
         self.ready_meta = {}
-        # A fresh worker holds no models; clearing last_heavy also stands the
-        # recycle loop down until the next heavy request.
+        # A fresh worker holds no models; clearing the clocks also stands the
+        # recycle loop down until the next request.
         self.last_heavy = None
+        self.last_use = None
         self.models_resident = False
 
     def _terminate(self) -> None:
@@ -361,6 +366,7 @@ class StdioWorker:
             self.proc.stdin.write((req + "\n").encode())
             await self.proc.stdin.drain()
             msg = await self._await_message()
+            self.last_use = time.monotonic()
             self._note_capability_loss(msg)
             # Stamp heavy use from what actually came back, not what was
             # asked: an analyze whose CLAP load failed still answers ok=true
@@ -375,7 +381,7 @@ class StdioWorker:
             return msg
 
     async def recycle_loop(self, idle_s: float) -> None:
-        """Terminate the worker after `idle_s` seconds without heavy use so
+        """Terminate the worker after `idle_s` seconds without a request so
         run() respawns it fresh — the full-memory counterpart to the worker's
         own model release. A pool reservation wins over recycling; once recycle
         claims the worker, new requests route to another available member — or,
@@ -385,9 +391,9 @@ class StdioWorker:
         holding the request lock across the respawn used to buy."""
         while True:
             await asyncio.sleep(60)
-            if not self.ready or self.last_heavy is None:
+            if not self.ready or self.last_use is None:
                 continue
-            if time.monotonic() - self.last_heavy < idle_s:
+            if time.monotonic() - self.last_use < idle_s:
                 continue
             # A pool reservation is made without yielding, as is this recycling
             # claim. Whichever happens first wins: admitted work completes on
@@ -399,10 +405,10 @@ class StdioWorker:
                 async with self.lock:
                     # Re-check under the lock: a heavy request may have completed
                     # while we waited to acquire it.
-                    if self.last_heavy is None or time.monotonic() - self.last_heavy < idle_s:
+                    if self.last_use is None or time.monotonic() - self.last_use < idle_s:
                         continue
                     log.info(
-                        f"[{self.name}] idle {int(idle_s)}s without heavy use — recycling worker "
+                        f"[{self.name}] idle {int(idle_s)}s — recycling worker "
                         "for a full memory reclaim (re-pays imports on next request)"
                     )
                     self.recycles += 1
