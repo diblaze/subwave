@@ -18,6 +18,8 @@ import { onCacheChange } from '../settings/store.js';
 import { applyKnownTrackCeiling } from '../music/track-duration.js';
 import * as settings from '../settings.js';
 import { jingleRotateOwner, rotateJingleDue } from './jingle-rotate.js';
+import { talkSourceOf, pickTalkSource } from './talk-source.js';
+import * as talkPool from './talk-pool.js';
 import { normGenre, genreMatches, genreResolutionWarningOnce, inYearRange, preferEnergy, preferEnergyStrict, preferMood, applyStrictLocks, hasEraBound, eraSpan, type VocalMode } from '../music/show-filter.js';
 import { freshnessBiasedOrder } from '../music/airing.js';
 import { recencyWindowsForLibrary } from '../music/recency.js';
@@ -866,15 +868,35 @@ export async function runProgrammeOutro() {
 
 // Station ident. Gate-free runner — the /dj/segment route fires it immediately;
 // the scheduled path passes atNextTrack so it holds for the next track boundary
-// rather than ducking mid-vocal.
-export async function runStationId({ atNextTrack = false, automatic = false } = {}) {
+// rather than ducking mid-vocal. `source: 'pool'` airs a pre-rendered clip for
+// the speaker instead of writing one (settings.talkSource); an empty pool goes
+// live while the token budget allows and stays quiet otherwise.
+export async function runStationId({ atNextTrack = false, automatic = false, source = 'live' as 'live' | 'pool' } = {}) {
   return withTrace({ kind: 'station-id' }, async () => {
-    const ctx = await prepareEpisodeContext(await getFullContext());
     let speaker = settings.pickOnAirSpeaker();
     const speechOwner = automatic
       ? session.captureAutomaticHostSpeech(speaker)
       : { persona: speaker, hostSpeech: null };
     speaker = speechOwner.persona;
+    const air = (text: string, extra: { daypart: string | null; prerendered?: string }) => {
+      const opts = { persona: speaker, hostSpeech: speechOwner.hostSpeech, meta: { personaId: speaker?.id, personaName: speaker?.name }, ...extra };
+      return atNextTrack ? queue.announceAtNextTrack(text, 'station-id', opts) : queue.announce(text, 'station-id', opts);
+    };
+    // Before the context build: a pooled ident needs none of it.
+    if (source === 'pool') {
+      const clip = await talkPool.draw(speaker);
+      if (clip) {
+        await air(clip.text, { daypart: null, prerendered: clip.wavPath });
+        return clip.text;
+      }
+      const who = speaker?.name ?? 'the host';
+      if (!optionalSegmentsAllowed()) {
+        queue.log('scheduler', `Talk pool empty for ${who} — ident skipped (over the token budget)`);
+        return '';
+      }
+      queue.log('scheduler', `Talk pool empty for ${who} — ident written live`);
+    }
+    const ctx = await prepareEpisodeContext(await getFullContext());
     // A deferred ident can wait across several boundaries, so stamp the daypart
     // offered to the model and let the queue refuse the clip if it changed.
     const daypart = atNextTrack
@@ -886,9 +908,7 @@ export async function runStationId({ atNextTrack = false, automatic = false } = 
       recentOpeners: queue.getRecentOpeners(),
       persona: speaker,
     });
-    const opts = { persona: speaker, daypart, hostSpeech: speechOwner.hostSpeech, meta: { personaId: speaker?.id, personaName: speaker?.name } };
-    if (atNextTrack) await queue.announceAtNextTrack(script, 'station-id', opts);
-    else await queue.announce(script, 'station-id', opts);
+    await air(script, { daypart });
     return script;
   });
 }
@@ -937,7 +957,8 @@ function talkEligible(kind: TalkKind, now: Date, rolled: SessionRoll | null): bo
   if (kind === 'station-id') {
     if (!shouldFire('stationId', now)) return false;
     if (!djCallsAllowed()) return false;  // nobody listening — skip the ident
-    if (!optionalSegmentsAllowed()) return false;  // over the daily token budget — mute optional segments
+    // over the daily token budget — mute optional segments; a pooled clip costs none
+    if (!optionalSegmentsAllowed() && talkSourceOf(settings.get()) === 'live') return false;
     return true;
   }
   if (kind === 'banter') return banterEligible(now);
@@ -999,11 +1020,14 @@ async function runTalkSlot(plan: Extract<TalkPlan, { act: 'fire' }>, rolled: Ses
   // engine is reached at all — so warming for it would reload a model nothing
   // is about to use, which is the same "quietly switch the unload off" failure
   // the fire-not-window rule above exists to avoid.
-  if (plan.kind !== 'jingle') void warmHeavy();
-  return withTalkAir(plan.air, () => runTalkSlotInner(plan, rolled));
+  // A pooled ident is the same case: decided here so the warm can be skipped.
+  const pooled = plan.kind === 'station-id'
+    && pickTalkSource({ mode: talkSourceOf(settings.get()), budgetNormal: optionalSegmentsAllowed() }) === 'pool';
+  if (plan.kind !== 'jingle' && !pooled) void warmHeavy();
+  return withTalkAir(plan.air, () => runTalkSlotInner(plan, rolled, pooled));
 }
 
-async function runTalkSlotInner(plan: Extract<TalkPlan, { act: 'fire' }>, rolled: SessionRoll | null) {
+async function runTalkSlotInner(plan: Extract<TalkPlan, { act: 'fire' }>, rolled: SessionRoll | null, pooled = false) {
   try {
     switch (plan.kind) {
       case 'hourly':
@@ -1012,7 +1036,11 @@ async function runTalkSlotInner(plan: Extract<TalkPlan, { act: 'fire' }>, rolled
       case 'station-id':
         // Read off the PLAN, not hardcoded, so the table stays the only place
         // placement is decided.
-        await runStationId({ atNextTrack: plan.air === 'next-track', automatic: true });
+        await runStationId({
+          atNextTrack: plan.air === 'next-track',
+          automatic: true,
+          source: pooled ? 'pool' : 'live',
+        });
         return;
       case 'banter':
         await runBanter();

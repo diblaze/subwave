@@ -98,6 +98,11 @@ export const jingleCreateSchema = z.object({
     .max(JINGLE_TEXT_MAX, `text too long (max ${JINGLE_TEXT_MAX})`),
 });
 
+// POST /talk-pool/render — pre-render station idents for one persona.
+export const talkPoolRenderSchema = z.object({
+  personaId: z.string({ error: 'personaId is required' }).min(1, 'personaId is required'),
+});
+
 // The multipart import bodies. Must sit AFTER audioUpload in the route chain:
 // multer parses the multipart body into req.body, and validateBody replaces
 // req.body only — req.file rides through untouched.

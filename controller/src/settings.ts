@@ -121,8 +121,10 @@ import {
   type ScheduledBackupSettings,
   type JingleRotateOwner,
   type TtsPatch,
+  type TalkSource,
 } from './schemas/settings.js';
 import { jingleRotateOwner, setJingleRotateOwner } from './broadcast/jingle-rotate.js';
+import { talkSourceOf } from './broadcast/talk-source.js';
 import { minTrackSeconds, peek, setCache } from './settings/store.js';
 import {
   SKILL_RENAMES,
@@ -473,6 +475,7 @@ export async function load() {
     // and an unrecognised owner here would decide whether TWO rotates run.
     // Anything but the explicit opt-in reads as the mixer (#1619).
     jingleRotate: jingleRotateOwner(stored),
+    talkSource: talkSourceOf(stored),
     crossfadeDuration: stored.crossfadeDuration ?? DEFAULTS.crossfadeDuration,
     // Bounded here as well as at the save path: a hand-edited settings.json is
     // load()'s input, so it repairs rather than throws — and an out-of-range `p`
@@ -1409,6 +1412,9 @@ export async function prepareUpdate(patch, { themeIds }: { themeIds?: ReadonlySe
       next.jingleRotate = v;
       restart = true;
     }
+  }
+  if ('talkSource' in patch) {
+    next.talkSource = parseSettingsPatchKey<TalkSource>('talkSource', patch.talkSource);
   }
   if ('crossfadeDuration' in patch) {
     const v = parseSettingsPatchKey<number>('crossfadeDuration', patch.crossfadeDuration);
