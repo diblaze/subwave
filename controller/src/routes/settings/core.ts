@@ -89,6 +89,7 @@ router.get('/settings', requireAdmin, async (req, res) => {
         // hands the rotate to the controller and writes the mixer's ratio 0.
         jingleRotate: s.jingleRotate,
         jinglePlacement: s.jinglePlacement,
+        talkSource: s.talkSource,
         crossfadeDuration: s.crossfadeDuration,
         ducking: s.ducking,
         // Repaired on the way out via the same function the air path uses: a
