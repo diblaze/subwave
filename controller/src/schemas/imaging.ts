@@ -111,6 +111,16 @@ export const imagingImportSchema = z.object({
   description: imagingDescription,
 });
 
+// PUT /jingles/:filename/shows — tie a jingle to shows; [] opens it to every
+// show. Ids are checked against the roster in the route, which has it.
+export const JINGLE_SHOWS_MAX = 64;
+export const jingleShowsSchema = z.object({
+  showIds: z
+    .array(z.string().trim().min(1), { error: 'showIds must be a list of show ids' })
+    .max(JINGLE_SHOWS_MAX, `at most ${JINGLE_SHOWS_MAX} shows`)
+    .transform((ids) => [...new Set(ids)]),
+});
+
 // A jingle import's label is optional — an absent label falls back to the
 // filename server-side.
 export const jingleImportSchema = z.object({

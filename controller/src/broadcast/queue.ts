@@ -33,7 +33,7 @@ import * as djAgent from './dj-agent.js';
 import * as programme from './programme.js';
 import * as sfx from './sfx.js';
 import * as jingles from './jingles.js';
-import { pickRotateJingle, onJingleRotateOwnerChange } from './jingle-rotate.js';
+import { pickRotateJingle, rotateJinglePool, onJingleRotateOwnerChange } from './jingle-rotate.js';
 import * as beds from './beds.js';
 import * as bedPolicy from './bed-policy.js';
 import { vocalRunwayMs, segmentFitsRunway } from './vocal-runway.js';
@@ -3332,12 +3332,17 @@ class Queue {
   // away.
   async playRotateJingle(): Promise<boolean> {
     this._tracksSinceJingle = 0;
+    // The show is the one on air when the jingle is picked; a jingle picked
+    // just before a show ends can air a track into the next one.
+    const rows = await jingles.list();
     const filename = pickRotateJingle(
-      (await jingles.list()).map(j => j.filename),
+      rotateJinglePool(rows, settings.resolveActiveShow()?.id ?? null),
       this._lastRotateJingle,
     );
     if (!filename) {
-      this.log('scheduler', '[jingle] rotate skipped — the jingle library is empty');
+      this.log('scheduler', rows.length
+        ? '[jingle] rotate skipped — no jingle is open to the show on air'
+        : '[jingle] rotate skipped — the jingle library is empty');
       return false;
     }
     const res = await this.playJingle(filename, { rotate: true });

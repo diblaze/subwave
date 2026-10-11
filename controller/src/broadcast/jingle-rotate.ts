@@ -4,6 +4,7 @@
 // a restart. See docs/internals/broadcast.md. #1619, #997, #1258, #1468.
 
 import type { JingleRotateOwner } from '../schemas/settings.js';
+import { showScopeAllows } from '../schemas/show.js';
 
 export type { JingleRotateOwner };
 
@@ -75,6 +76,25 @@ export function pickRotateJingle(
   const pool = filenames.length > 1 ? filenames.filter(f => f !== last) : filenames;
   const from = pool.length ? pool : filenames;
   return from[Math.min(from.length - 1, Math.floor(rand() * from.length))] ?? null;
+}
+
+// Which jingles a rotate may draw while `activeShowId` is on air (#1875).
+//
+// A jingle with no show list is open to every show. One with a list plays only
+// in those shows, and a jingle tied elsewhere is never a fallback: an empty
+// pool skips the slot. When the show on air has jingles of its own AND open
+// ones exist, its own are preferred, not exclusive, so a show keeps its sound
+// without the station's general idents disappearing from it.
+export const SHOW_JINGLE_SHARE = 0.75;
+export function rotateJinglePool(
+  rows: readonly { filename: string; showIds?: readonly string[] }[],
+  activeShowId: string | null,
+  rand: () => number = Math.random,
+): string[] {
+  const own = rows.filter(r => (r.showIds?.length ?? 0) > 0 && showScopeAllows(r.showIds!, activeShowId));
+  const open = rows.filter(r => (r.showIds?.length ?? 0) === 0);
+  const from = own.length && open.length ? (rand() < SHOW_JINGLE_SHARE ? own : open) : (own.length ? own : open);
+  return from.map(r => r.filename);
 }
 
 // Snapshot for the admin /debug surface, beside voice/clock/talkAir. `owner`

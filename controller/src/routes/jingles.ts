@@ -8,7 +8,7 @@ import { queue } from '../broadcast/queue.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { audioUpload } from '../middleware/upload.js';
 import { validateBody } from '../middleware/validate.js';
-import { jingleCreateSchema, jingleImportSchema, talkPoolRenderSchema } from '../schemas/imaging.js';
+import { jingleCreateSchema, jingleImportSchema, jingleShowsSchema, talkPoolRenderSchema } from '../schemas/imaging.js';
 import { sendAudioFile } from '../util/audio-response.js';
 import { tagger, startTagger, stopTagger } from '../broadcast/tagger.js';
 
@@ -75,6 +75,30 @@ router.delete('/jingles/:filename', requireAdmin, async (req, res) => {
     res.json(await jingles.remove(req.params.filename));
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+// Tie a jingle to shows (#1875); `showIds: []` opens it to every show again.
+// An unknown id is refused, not dropped: the admin only ever posts ids from the
+// live roster, so one that is not there is a mistake worth saying out loud.
+router.put('/jingles/:filename/shows', requireAdmin, validateBody(jingleShowsSchema), async (req, res) => {
+  const { showIds } = req.body as { showIds: string[] };
+  const filename = String(req.params.filename);
+  try {
+    if (!(await jingles.getPath(filename))) {
+      return res.status(404).json({ error: `unknown jingle: ${filename}` });
+    }
+    const known = new Set((settings.get().shows || []).map((s: { id: string }) => s.id));
+    const unknown = showIds.find(id => !known.has(id));
+    if (unknown) {
+      const error = `unknown show: ${unknown}`;
+      return res.status(400).json({ error, fieldErrors: { showIds: error } });
+    }
+    const saved = await jingles.setShows(filename, showIds);
+    queue.log('scheduler', `Jingle ${saved.filename} ${saved.showIds.length ? `tied to ${saved.showIds.length} show(s)` : 'opened to every show'}`);
+    res.json(saved);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
