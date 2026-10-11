@@ -683,6 +683,17 @@ export function isFishS21Model(model: string): boolean {
   return /^s2[._-]?1(?:[._-]|$)/i.test(model || '');
 }
 
+// Speech model ids from ElevenLabs' GET /v1/models, which also lists
+// voice-changer and other non-speech models. Provider order is kept: it leads
+// with the current generation.
+export function elevenLabsTtsModelIds(data: unknown): string[] {
+  if (!Array.isArray(data)) return [];
+  return (data as { model_id?: unknown; can_do_text_to_speech?: unknown }[])
+    .filter((m) => m?.can_do_text_to_speech === true)
+    .map((m) => m.model_id)
+    .filter((id): id is string => typeof id === 'string' && !!id);
+}
+
 export function cloudExpressionCueFamily(provider: string, model: string): 'fish-s21' | 'elevenlabs-v3' | null {
   if (provider === 'fish-audio' && isFishS21Model(model)) return 'fish-s21';
   if (provider === 'elevenlabs' && isElevenLabsAudioTagModel(model)) return 'elevenlabs-v3';
