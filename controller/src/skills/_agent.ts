@@ -162,9 +162,6 @@ function unavailableRetryBackoffMs(cap: { cooldownMs?: unknown }): number {
 // skills/curiosity.js (#577) so it survives a restart.
 interface SegmentState {
   seenHeadlines: Set<string>;
-  // Burn-on-read memory for the generic feed tool (skills/feed.ts), keyed by
-  // kind so two feed skills can't suppress each other's items.
-  feedSeen: Map<string, Set<string>>;
   lastWeatherCondition: string | null;
   lastSearchedArtist: string | null;
   lastAnySegment: number;
@@ -172,7 +169,6 @@ interface SegmentState {
 
 const segmentState: SegmentState = {
   seenHeadlines: new Set<string>(),
-  feedSeen: new Map<string, Set<string>>(),
   lastWeatherCondition: null,
   lastSearchedArtist: null,
   lastAnySegment: 0,

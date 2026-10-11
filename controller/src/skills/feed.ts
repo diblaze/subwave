@@ -3,7 +3,9 @@
 // News uses the same generic path; config comes from resolveFeedConfig.
 
 import { XMLParser } from 'fast-xml-parser';
-import { config } from '../config.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { config, STATE_DIR } from '../config.js';
+import { writeFileAtomicSync } from '../util/atomic-file.js';
 import { fetchWithTimeout } from '../util/fetch-timeout.js';
 
 // The frontmatter keys that declare a feed. One spelling, shared by the
@@ -184,11 +186,37 @@ export const FEED_CONFIG_FIELDS = {
 // between-track aside leaves nothing for the next break.
 export const FEED_ITEMS_PER_FIRE = 6;
 
-// Burn-on-read memory, per skill. Trimmed rather than grown without bound; a
-// feed that rotates faster than the trim just re-offers an old item eventually,
-// which is the harmless direction.
-const SEEN_HIGH_WATER = 120;
-const SEEN_KEEP = 60;
+// What each feed skill has already offered the DJ, kept on disk so a restart or
+// a manual Run now does not start the feed over. An item may be offered TWICE,
+// the second time no sooner than FEED_REPEAT_GAP_MS after the first: a story is
+// worth a second mention to whoever tuned in later, and never a third. Offers
+// are counted, not broadcasts, because the tool cannot know which of the items
+// it handed over the model chose; the count is therefore an upper bound on how
+// often a story can air.
+export const FEED_MAX_AIRINGS = 2;
+export const FEED_REPEAT_GAP_MS = 3 * 60 * 60 * 1000;
+const LEDGER_PATH = `${STATE_DIR}/feed-aired.json`;
+const LEDGER_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+
+interface Aired { n: number; at: number }
+type Ledger = Record<string, Record<string, Aired>>;
+let ledger: Ledger | null = null;
+
+function loadLedger(): Ledger {
+  if (ledger) return ledger;
+  try {
+    ledger = existsSync(LEDGER_PATH) ? JSON.parse(readFileSync(LEDGER_PATH, 'utf8')) as Ledger : {};
+  } catch {
+    ledger = {};  // unreadable: the cost is one repeat, never a silent feed
+  }
+  return ledger!;
+}
+
+// Test seam: forget everything, in memory and on disk.
+export function resetFeedLedger(): void {
+  ledger = {};
+  try { writeFileAtomicSync(LEDGER_PATH, '{}'); } catch { /* nothing to reset */ }
+}
 
 export interface ResolvedFeed {
   url: string;
@@ -246,20 +274,6 @@ function resolveMaxItems(raw: unknown, warnings: string[]): number {
   return n;
 }
 
-// The per-skill burn-on-read set, kept on the segment director's cross-tick
-// state. Namespaced by kind: two skills reading two feeds must not suppress each
-// other's items just because a headline hashes the same.
-function seenSetFor(state: any, kind: string): Set<string> {
-  if (!state || typeof state !== 'object') return new Set<string>();
-  if (!(state.feedSeen instanceof Map)) state.feedSeen = new Map<string, Set<string>>();
-  let seen = state.feedSeen.get(kind);
-  if (!(seen instanceof Set)) {
-    seen = new Set<string>();
-    state.feedSeen.set(kind, seen);
-  }
-  return seen;
-}
-
 // Build the data tool for a declared feed. Same signature as a skill's own
 // tool.mjs default export, so the loader attaches it to `cap.toolFn` and every
 // caller (llm/internal/tools/segment-tools.ts, the forced path, the co-hosted
@@ -273,21 +287,35 @@ function seenSetFor(state: any, kind: string): Set<string> {
 // `available: false` is the shape every data tool already uses for "nothing
 // worth airing", which stands those runs down and lets the pool path back off.
 export function makeFeedTool(kind: string, feed: ResolvedFeed) {
-  return async function fetchFeedItems(_ctx?: unknown, state?: any) {
-    const seen = seenSetFor(state, kind);
+  return async function fetchFeedItems(_ctx?: unknown, _state?: unknown) {
     const items = await fetchHeadlines({ feedUrl: feed.url, maxItems: feed.maxItems });
     // A feed that fetched fine but carries no readable items is the same
     // answer as one that has all aired. It touches no dedup memory.
     if (!items.length) return { available: false, reason: 'the feed has no items' };
-    const fresh = items.filter(it => !seen.has(hashHeadline(it.title))).slice(0, FEED_ITEMS_PER_FIRE);
+    const now = Date.now();
+    const all = loadLedger();
+    // Namespaced by kind: two skills reading two feeds must not suppress each
+    // other's items just because a headline hashes the same.
+    const aired = (all[kind] ??= {});
+    const due = (it: { title: string }) => {
+      const a = aired[hashHeadline(it.title)];
+      return !a || (a.n < FEED_MAX_AIRINGS && now - a.at >= FEED_REPEAT_GAP_MS);
+    };
+    // Never-offered items first, so a second mention only fills what is left.
+    const fresh = [
+      ...items.filter(it => due(it) && !aired[hashHeadline(it.title)]),
+      ...items.filter(it => due(it) && aired[hashHeadline(it.title)]),
+    ].slice(0, FEED_ITEMS_PER_FIRE);
     if (!fresh.length) return { available: false, reason: 'every item on the feed has already aired' };
     // Burn on read so a later tick doesn't re-offer the same item.
-    for (const it of fresh) seen.add(hashHeadline(it.title));
-    if (seen.size > SEEN_HIGH_WATER) {
-      const kept = Array.from(seen).slice(-SEEN_KEEP);
-      seen.clear();
-      for (const h of kept) seen.add(h);
+    for (const it of fresh) {
+      const h = hashHeadline(it.title);
+      aired[h] = { n: (aired[h]?.n ?? 0) + 1, at: now };
     }
+    for (const k of Object.keys(all)) {
+      for (const [h, a] of Object.entries(all[k]!)) if (now - a.at > LEDGER_KEEP_MS) delete all[k]![h];
+    }
+    try { writeFileAtomicSync(LEDGER_PATH, JSON.stringify(all)); } catch { /* memory still holds it */ }
     return { headlines: fresh.map(it => ({ title: it.title, detail: it.description || null })) };
   };
 }

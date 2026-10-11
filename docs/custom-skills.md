@@ -131,8 +131,10 @@ every feed skill gets the same behaviour:
   (`<dc:title>`, `<content:encoded>`) and CDATA included.
 - `feedMaxItems` (1–50, default 10) caps how much of the feed is read per fire.
 - Items are **burned on read**: at most 6 fresh items reach one segment, and the
-  next fire offers the ones after them rather than repeating. That memory is
-  per-skill and lives for as long as the controller runs.
+  next fire offers the ones after them rather than repeating. An item can come
+  back once, no sooner than three hours later, and never a third time. That
+  memory is per-skill and kept on disk (`feed-aired.json` in the state dir), so
+  a restart or a manual Run now does not start the feed over.
 - A fetch that fails or times out stands the segment down instead of letting the
   DJ invent one — the same grounding rule every data-backed skill follows. So
   does a feed with **nothing fresh left**: once every item has aired, or when the

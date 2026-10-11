@@ -13,6 +13,7 @@
 // Run: `npm test -- skill-feed-tool`.
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createServer, type Server } from 'node:http';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -139,7 +140,7 @@ const realLog = queue.log.bind(queue);
 
 const { loadSkills, readTemplate } = await import('../src/skills/loader.js');
 const { buildSegmentTools, fetchSegmentData } = await import('../src/llm/internal/tools/segment-tools.js');
-const { resolveFeedConfig, makeFeedTool, FEED_ITEMS_PER_FIRE } = await import('../src/skills/feed.js');
+const { resolveFeedConfig, makeFeedTool, FEED_ITEMS_PER_FIRE, FEED_MAX_AIRINGS, FEED_REPEAT_GAP_MS, resetFeedLedger } = await import('../src/skills/feed.js');
 const { requiresGrounding, standDownReason } = await import('../src/skills/abstain-policy.js');
 
 const caps = await loadSkills();
@@ -170,7 +171,8 @@ test('the operator knobs are offered even before a value exists', () => {
 });
 
 test('items are burned on read, so a second fire offers the rest', async () => {
-  // Its own state object, so this test does not depend on the one above.
+  // The memory is on disk and shared by every run, so start it empty.
+  resetFeedLedger();
   const state: any = {};
   const cap = capOf('giveaway');
   const first: any = await cap.toolFn({}, state);
@@ -189,6 +191,28 @@ test('items are burned on read, so a second fire offers the rest', async () => {
   assert.match(third.reason, /already aired/);
 });
 
+test('a story is offered twice at most, the second time only after the gap, and a restart forgets nothing', async (t) => {
+  resetFeedLedger();
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const cap = capOf('giveaway');
+  const titles = async () => ((await cap.toolFn({}, {})) as any).headlines?.map((h: any) => h.title) ?? null;
+  // A fresh state object every call, as a manual Run now passes: the memory must not live there.
+  assert.equal((await titles())!.length, FEED_ITEMS_PER_FIRE);
+  assert.deepEqual(await titles(), ['Story 7', 'Story 8', 'Story 9', 'Story 10']);
+  assert.equal(await titles(), null, 'inside the gap nothing comes back');
+
+  // What a restart leaves behind is the file, and the file alone must hold the count.
+  const onDisk = JSON.parse(readFileSync(join(STATE_DIR, 'feed-aired.json'), 'utf8'));
+  assert.equal(Object.keys(onDisk.giveaway).length, 10);
+
+  t.mock.timers.tick(FEED_REPEAT_GAP_MS + 1000);
+  const again = [...(await titles())!, ...(await titles())!];
+  assert.equal(again.length, 10, 'after the gap every story gets its second mention');
+  t.mock.timers.tick(10 * FEED_REPEAT_GAP_MS);
+  assert.equal(await titles(), null, `no story is offered more than ${FEED_MAX_AIRINGS} times`);
+  resetFeedLedger();
+});
+
 test('a feed that fetched fine but was empty from the start is the same answer', async () => {
   const empty = makeFeedTool('empty-feed', { url: feedUrl('/empty'), maxItems: 5 });
   const state: any = {};
@@ -201,6 +225,7 @@ test('a feed that fetched fine but was empty from the start is the same answer',
 test('a drained or empty feed stands a grounded run down through the one chokepoint', async () => {
   // The forced paths (Run now, skill cron, programme beat) and the pool
   // director all ask standDownReason; none of them knows the feed's shape.
+  resetFeedLedger();
   const cap = capOf('giveaway');
   const state: any = {};
   // Two fires spend the 10-item feed; a third has nothing left.
@@ -214,6 +239,7 @@ test('a drained or empty feed stands a grounded run down through the one chokepo
   assert.match(String(standDownReason(empty, none)), /nothing fresh/);
 
   // A fresh fire is still usable data — the change only touches the empty case.
+  resetFeedLedger();
   const fresh = await fetchSegmentData(cap, {}, {});
   assert.equal(standDownReason(cap, fresh), null);
 
