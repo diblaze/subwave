@@ -18,7 +18,7 @@ import { withTrace, logEvent } from '../observability/events.js';
 import { recencyWindowsForLibrary } from '../music/recency.js';
 import { showNoRepeatGuard } from '../music/show-recency.js';
 import { EXPLORE_SEED_PROBABILITY } from '../music/airing.js';
-import { ARTIST_VARIETY_WINDOW, runArtistGuard } from './dj-agent/artist-guard.js';
+import { ARTIST_VARIETY_WINDOW, artistSpacingClause, runArtistGuard } from './dj-agent/artist-guard.js';
 import { runAlbumGuard } from './dj-agent/album-guard.js';
 import { albumKeyFor } from '../music/album-facts.js';
 import { hasEraBound, genreResolutionWarningOnce, type VocalMode } from '../music/show-filter.js';
@@ -1001,7 +1001,11 @@ export async function runTrackEvent(queue, ctx, { wantLink, showAt = null, pickA
         + (pickAnchor?.id ? ` [id: ${pickAnchor.id}]` : '')
         + (anchorPriorTrack ? ` (after "${anchorPriorTrack.title}" by ${anchorPriorTrack.artist})` : '')
         + '. Pick the track to play next.';
-    const promptSuffix = `${favClause}${effectClause}${runClause}${journeyClause}${exploreClause}`;
+    // The same window the artist guard reads after the pick; the guard stays
+    // the backstop and takes its own snapshot.
+    const spacingWindow = settings.get().llm?.artistVarietyWindow ?? ARTIST_VARIETY_WINDOW;
+    const spacingClause = artistSpacingClause(queue.neighbourArtistRoots(spacingWindow), spacingWindow);
+    const promptSuffix = `${favClause}${effectClause}${runClause}${journeyClause}${exploreClause}${spacingClause}`;
     session.appendTurn({
       role: 'event', kind: 'pick', text: eventText,
       meta: promptSuffix ? { promptSuffix } : {},

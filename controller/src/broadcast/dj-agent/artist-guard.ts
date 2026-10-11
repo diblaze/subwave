@@ -37,6 +37,17 @@ export function artistGuardCause(
   return recentRoots.has(pickRoot) ? 'recent' : null;
 }
 
+// What the pick event tells the model about the spacing guard. The event text
+// names one predecessor, while the guard compares the pick against every
+// artist in `recentRoots`; a picker that cannot see that set walks into it and
+// is re-picked, a billed call each time. The keys are listed as the guard holds
+// them (folded root keys), because that is exactly the set it compares. Worded
+// as a re-pick, not a ban: `recent` is a preference the caller may yield on.
+export function artistSpacingClause(recentRoots: Set<string>, window: number): string {
+  if (!recentRoots.size) return '';
+  return ` Artists heard in the surrounding ${window} slots (queued, on air, just played) — the station re-picks a repeat, so choose a different artist: ${[...recentRoots].join(', ')}.`;
+}
+
 export interface AlternativePool<T> {
   // The candidates the re-pick may choose from, keyed by id as `seen` is.
   alt: Map<string, T>;

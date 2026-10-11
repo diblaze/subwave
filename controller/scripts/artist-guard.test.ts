@@ -12,7 +12,8 @@
 
 import assert from 'node:assert/strict';
 import { artistKey, artistRootKey, filterPickerCandidates } from '../src/music/recency.js';
-import { ARTIST_VARIETY_WINDOW, alternativeCandidates, artistGuardCause } from '../src/broadcast/dj-agent/artist-guard.js';
+import { readFileSync } from 'node:fs';
+import { ARTIST_VARIETY_WINDOW, alternativeCandidates, artistGuardCause, artistSpacingClause } from '../src/broadcast/dj-agent/artist-guard.js';
 import { queue } from '../src/broadcast/queue.js';
 
 // ── artistRootKey: collaborations collapse, band names don't ────────────────
@@ -350,5 +351,22 @@ assert(
 // would match every untagged candidate.
 setPlays([{ id: 'D', title: 'Untitled', artist: '', endedAt: '2026-07-30T18:00:00.000Z' }]);
 assert.equal(queue.neighbourArtistRoots(3).size, 0, 'an artist-less play adds no key');
+
+// The picker is told the set the guard will compare its pick against. Without
+// it the event text names one predecessor and the model walks into the window.
+assert.equal(artistSpacingClause(new Set(), 12), '', 'an empty window adds nothing to the prompt');
+assert.equal(artistSpacingClause(queue.neighbourArtistRoots(0), 0), '', 'spacing switched off says nothing');
+const clause = artistSpacingClause(new Set(['curtis mayfield', 'isley brothers']), 12);
+assert.match(clause, /surrounding 12 slots/);
+assert.match(clause, /curtis mayfield, isley brothers\.$/, 'every guarded key is listed, exactly as the guard holds it');
+assert.match(clause, /re-picks a repeat/, 'worded as the preference it is, not a ban');
+// The clause has to reach the pick event, built from the same window the guard reads.
+const agentSource = readFileSync(new URL('../src/broadcast/dj-agent.ts', import.meta.url), 'utf8');
+assert.match(
+  agentSource,
+  /artistSpacingClause\(queue\.neighbourArtistRoots\(spacingWindow\), spacingWindow\)/,
+  'runTrackEvent no longer tells the picker which artists the guard excludes',
+);
+assert.match(agentSource, /\$\{exploreClause\}\$\{spacingClause\}`/, 'the clause is built but never appended to the pick event');
 
 console.log('artist-guard checks passed');
