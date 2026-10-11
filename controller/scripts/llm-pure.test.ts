@@ -1476,6 +1476,12 @@ async function main() {
   await test('cue families require both the matching provider and model family', () => {
     assert.equal(cloudExpressionCueFamily('fish-audio', 's2.1-pro'), 'fish-s21');
     assert.equal(cloudExpressionCueFamily('elevenlabs', 'eleven_v3'), 'elevenlabs-v3');
+    assert.equal(cloudExpressionCueFamily('elevenlabs', 'eleven_v3_conversational'), 'elevenlabs-v3');
+    assert.equal(cloudExpressionCueFamily('elevenlabs', 'eleven_v4'), 'elevenlabs-v3');
+    assert.equal(cloudExpressionCueFamily('elevenlabs', 'eleven_v4_turbo'), 'elevenlabs-v3');
+    assert.equal(cloudExpressionCueFamily('elevenlabs', 'eleven_flash_v2_5'), null);
+    assert.equal(cloudExpressionCueFamily('elevenlabs', 'eleven_v5'), null, 'an unchecked family stays out');
+    assert.equal(cloudExpressionCueFamily('elevenlabs', 'eleven_v40'), null);
     assert.equal(cloudExpressionCueFamily('fish-audio', 'eleven_v3_custom'), null);
     assert.equal(cloudExpressionCueFamily('elevenlabs', 's2.1-pro'), null);
     assert.equal(cloudExpressionCueFamily('openai', 'eleven_v3'), null);
@@ -1492,6 +1498,8 @@ async function main() {
     assert.equal(isElevenLabsV3('eleven_flash_v2_5'), false);
     assert.equal(isElevenLabsV3('eleven_multilingual_v2'), false);
     assert.equal(isElevenLabsV3('eleven_ttv_v3'), false);
+    assert.equal(isElevenLabsV3('eleven_v4'), false, 'v4 takes a continuous stability: no snap');
+    assert.equal(isElevenLabsV3('eleven_v4_turbo'), false);
     assert.equal(isElevenLabsV3('gpt-4o-mini-tts'), false);
     assert.equal(isElevenLabsV3(''), false);
   });
