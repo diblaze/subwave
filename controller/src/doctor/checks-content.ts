@@ -6,6 +6,8 @@
 import { readFile } from 'node:fs/promises';
 import { STATE_DIR } from '../config.js';
 import * as settings from '../settings.js';
+import * as jingles from '../broadcast/jingles.js';
+import { jingleRotateOwner } from '../broadcast/jingle-rotate.js';
 import { getSetupStatus } from '../setup/firstRun.js';
 import type { Finding, FixAction } from './types.js';
 import { dirSize, fmtBytes } from './util.js';
@@ -21,12 +23,29 @@ export async function checkContent(): Promise<Finding[]> {
     fix: { id: 'refresh-playlist', label: 'Refresh playlist' },
   }));
 
-  // jingles.m3u — station idents.
-  out.push(await m3uFinding(`${STATE_DIR}/jingles.m3u`, {
-    label: 'jingles',
-    emptyHint: 'No station idents yet. Generate the defaults to get jingles between tracks.',
-    fix: { id: 'generate-jingles', label: 'Generate jingles' },
-  }));
+  // jingles.m3u — station idents. It lists only jingles open to every show
+  // (#1875), so a library whose jingles are all tied to shows has an empty
+  // playlist and is not an empty library.
+  const jingleRows = await jingles.list().catch(() => []);
+  const tied = jingleRows.filter(j => j.showIds.length > 0).length;
+  const controllerCounts = jingleRotateOwner(settings.get()) === 'controller';
+  if (tied > 0 && tied === jingleRows.length && controllerCounts) {
+    out.push({ label: 'jingles', status: 'ok', detail: `${tied} entries, all tied to shows` });
+  } else {
+    out.push(await m3uFinding(`${STATE_DIR}/jingles.m3u`, {
+      label: 'jingles',
+      emptyHint: 'No station idents yet. Generate the defaults to get jingles between tracks.',
+      fix: { id: 'generate-jingles', label: 'Generate jingles' },
+    }));
+  }
+  if (tied > 0 && !controllerCounts) {
+    out.push({
+      label: 'show jingles',
+      status: 'warn',
+      detail: `${tied} of ${jingleRows.length} tied to shows`,
+      hint: 'Show-tied jingles rotate only when the controller counts the tracks. Imaging → Jingles → counted by: Controller, then restart the mixer, or clear their show lists.',
+    });
+  }
 
   return out;
 }

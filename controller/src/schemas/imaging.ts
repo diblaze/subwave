@@ -103,6 +103,16 @@ export const talkPoolRenderSchema = z.object({
   personaId: z.string({ error: 'personaId is required' }).min(1, 'personaId is required'),
 });
 
+// PUT /jingles/:filename/shows — tie a jingle to shows; [] opens it to every
+// show. Ids are checked against the roster in the route, which has it.
+export const JINGLE_SHOWS_MAX = 64;
+export const jingleShowsSchema = z.object({
+  showIds: z
+    .array(z.string().trim().min(1), { error: 'showIds must be a list of show ids' })
+    .max(JINGLE_SHOWS_MAX, `at most ${JINGLE_SHOWS_MAX} shows`)
+    .transform((ids) => [...new Set(ids)]),
+});
+
 // The multipart import bodies. Must sit AFTER audioUpload in the route chain:
 // multer parses the multipart body into req.body, and validateBody replaces
 // req.body only — req.file rides through untouched.

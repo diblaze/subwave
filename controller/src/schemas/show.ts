@@ -16,6 +16,12 @@ import { z } from 'zod';
 export const SHOW_ID_RE = /^[a-z0-9_]{3,32}$/;
 
 export const SHOWS_LIMIT = 64;
+
+// Does a thing tied to `showIds` apply while `activeShowId` is on air? An empty
+// list is "every show"; a tied thing with no show on air applies nowhere.
+export function showScopeAllows(showIds: readonly string[], activeShowId: string | null): boolean {
+  return showIds.length === 0 || (activeShowId != null && showIds.includes(activeShowId));
+}
 export const SHOW_NAME_MAX = 60;
 export const SHOW_TOPIC_MAX = 2000;
 export const GUESTS_PER_SHOW = 3;
