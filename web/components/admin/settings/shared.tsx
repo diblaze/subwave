@@ -408,10 +408,14 @@ export interface JingleEntry {
   createdAt?: string;
   builtin?: boolean;
   source?: string;
+  /** Shows this jingle is tied to (#1875). Empty or absent = every show. */
+  showIds?: string[];
 }
 
 export interface SettingsData {
   values?: {
+    /** The show roster, as far as this panel needs it: ids and names. */
+    shows?: Array<{ id?: string; name?: string }>;
     jingleRatio?: number;
     /** Who counts the tracks between jingles (#1619). Absent on an older
      *  controller, which is the same thing as 'mixer'. The union comes from the
