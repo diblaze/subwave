@@ -9,7 +9,7 @@ import { generateText, APICallError, ToolChoiceViolationError } from 'ai';
 import { MockLanguageModelV3 } from 'ai/test';
 import { stripThinking, truncationError, extractJson, usageOf, perfOf, warningsOf, budgetMode, isGenerationControlError, isProviderRequestTimeout, isUnreachable, isTransient, isQuotaOrAuthError, isUpstreamOverloaded, isRateLimited, isModelUnavailable, errReason, nearestId, isElevenLabsV3, isFishS21Model, cloudExpressionCueFamily, snapV3Stability, modelTolerant, schemaHint, clipText, soulBrief, SOUL_BRIEF_MAX, renderTerminalPrompt, messageText } from '../src/llm/internal/core/pure.js';
 import { withDeadline, withTransientRetry, retryAfterMs } from '../src/llm/internal/core/retry.js';
-import { reasoningFor, needsToolCallObject, repeatPenaltyApplies, appliedNumCtx, appliedRepeatPenalty, forcedToolChoice, thinkingMandatoryModel, discoveryStepsFor, gatedMaxStepsFor, runDiscoverySteps, DISCOVERY_STEPS_MIN, DISCOVERY_STEPS_MAX } from '../src/llm/internal/provider/capabilities.js';
+import { reasoningFor, needsToolCallObject, repeatPenaltyApplies, appliedNumCtx, appliedRepeatPenalty, forcedToolChoice, nativeFirstStepToolChoice, thinkingMandatoryModel, discoveryStepsFor, gatedMaxStepsFor, runDiscoverySteps, DISCOVERY_STEPS_MIN, DISCOVERY_STEPS_MAX } from '../src/llm/internal/provider/capabilities.js';
 import { agentPlan } from '../src/llm/internal/strategy/plan.js';
 import { objectViaToolCall, emitInstructions, EMIT_ANSWER_INSTRUCTION } from '../src/llm/internal/strategy/object-via-tool.js';
 import { NATIVE_JSON_INSTRUCTION } from '../src/llm/internal/strategy/object.js';
@@ -645,6 +645,13 @@ async function main() {
     // Garbage / missing cfg never accidentally weakens the default.
     assert.equal(forcedToolChoice({ toolChoice: 'whatever' }), 'required');
     assert.equal(forcedToolChoice(undefined), 'required');
+  });
+  await test('nativeFirstStepToolChoice: hosted openai-compatible stays auto, every other leg follows forcedToolChoice (#1693 case D)', () => {
+    // Mistral: json_schema with tools is only compatible with tool_choice auto.
+    assert.equal(nativeFirstStepToolChoice({ provider: 'openai-compatible', compatibleMode: 'hosted' }), 'auto');
+    assert.equal(nativeFirstStepToolChoice({ provider: 'openai' }), 'required');
+    assert.equal(nativeFirstStepToolChoice({ provider: 'openai', toolChoice: 'auto' }), 'auto');
+    assert.equal(nativeFirstStepToolChoice({ provider: 'anthropic', model: 'claude-opus-5-5' }), 'auto');
   });
   await test('forcedToolChoice: thinking-mandatory Claude models are always auto — they 400 on tool_choice any/tool', () => {
     // The live failure: openai-compatible proxy → claude-sonnet-5-5, required → any → 400.
