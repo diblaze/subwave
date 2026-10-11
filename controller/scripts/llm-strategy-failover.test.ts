@@ -156,6 +156,43 @@ test('native-first djAgent still recovers from malformed output through the prim
   assert.equal(recentCalls[0].model, 'openai:strategy-primary');
 });
 
+// The native pass sends the output schema on every step. With tool choice left
+// open on step 0, the object is a complete answer there, and a model that gives
+// it has explored nothing: the run is thrown away and the pick repeats through
+// the done tool. Forcing the first step is what makes the native pass finish.
+const explorable = { sample: { inputSchema: z.object({}), execute: async () => ({ found: 1 }) } };
+
+test('the native pass forces a discovery call on its first step only, and finishes in two calls', async (t) => {
+  const { primary } = configure(t, 'openai');
+  const choices: unknown[] = [];
+  for (const model of new Set([primary.model, primary.noThinkModel])) {
+    t.mock.method(model, 'doGenerate', async (options: { toolChoice?: { type?: string } }) => {
+      choices.push(options.toolChoice?.type ?? 'auto');
+      return choices.length === 1 ? response('{}', 'sample') : response(JSON.stringify(answer));
+    });
+  }
+  const result = await djAgent({ system: 'Choose a name', messages: [{ role: 'user', content: 'Choose' }], tools: explorable, schema });
+  assert.deepEqual(result.object, answer);
+  assert.deepEqual(choices, ['required', 'auto'], 'step 0 must explore; later steps may answer');
+  assert.equal(recentCalls[0].via, 'ai-sdk:agent:native', 'the done-tool fallback ran');
+});
+
+test('an operator who downgraded tool choice to auto keeps it on the native first step', async (t) => {
+  configure(t, 'openai');
+  const current = store.peek();
+  store.setCache({ ...current, llm: { ...current.llm, toolChoice: 'auto' } });
+  const choices: unknown[] = [];
+  const leg = primaryLeg();
+  for (const model of new Set([leg.model, leg.noThinkModel])) {
+    t.mock.method(model, 'doGenerate', async (options: { toolChoice?: { type?: string } }) => {
+      choices.push(options.toolChoice?.type ?? 'auto');
+      return nativeAgentAnswer();
+    });
+  }
+  await djAgent({ system: 'Choose a name', messages: [{ role: 'user', content: 'Choose' }], tools: explorable, schema });
+  assert.equal(choices[0], 'auto');
+});
+
 test('a permanent error during agent terminal recovery reaches the backup without text salvage masking it', async (t) => {
   const legs = configure(t, 'ollama');
   const error = new Error('model strategy-primary has been retired');

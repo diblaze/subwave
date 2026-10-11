@@ -267,6 +267,17 @@ export async function djAgent({
 
         // Native-first structured output. A miss falls through to the done-tool
         // path below; lastVia stays ':native' so the record attributes there.
+        //
+        // The first step is FORCED onto a tool. The output schema rides every
+        // step, so with tool choice left open a step-0 object is a complete,
+        // compliant answer, and a model that gives it has explored nothing: the
+        // run is then discarded below and the whole pick repeats in done-tool
+        // mode, five model calls where two would do. Later steps stay open so
+        // the model emits the object once it holds candidates. forcedToolChoice
+        // keeps 'auto' where forcing is known to break (#570, thinking-mandatory
+        // models); a provider that rejects the pair lands in the catch below,
+        // which is the pre-existing cost.
+        const nativeFirstStepChoice = forcedToolChoice(leg.cfg);
         if (plan === 'native-then-done') {
           try {
             lastVia = 'ai-sdk:agent:native';
@@ -287,6 +298,8 @@ export async function djAgent({
               // free text still reasons.
               reasoning: reasoningFor(leg.cfg, { forceNoThink: true }),
               output: Output.object({ schema: schema! }),
+              prepareStep: async ({ stepNumber }: { stepNumber: number }) =>
+                (stepNumber === 0 ? { toolChoice: nativeFirstStepChoice } : {}),
             } as any);
             const nr = await runDeadlined(deadlineAt, kind, 'native run', nativeAgent, messages);
             const nObj = nr.output;
