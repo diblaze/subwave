@@ -503,7 +503,7 @@ export function EngineVoiceFields({
                 />
               </div>
               <div className="field max-w-[420px]">
-                {geminiAvail === false && notice('gemini')}
+                {geminiSelected && geminiAvail === false && notice('gemini')}
                 <Label>{geminiSelected ? 'Voice' : 'Cloud voice'}</Label>
                 {!hasList ? (
                   <>
