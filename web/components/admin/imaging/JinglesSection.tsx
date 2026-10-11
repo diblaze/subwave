@@ -12,6 +12,7 @@ import { Badge } from '../../ui/badge';
 import { Btn, Seg } from '../ui';
 import { PreviewButton, type SettingsData, type SaveSettings } from '../settings/shared';
 import type { JingleImportFailure, JingleImportResult, ImagingSubmitResult } from './types';
+import { jingleShowsLabel, tiedJingleCount, type ShowRef } from './jingle-shows';
 import { notify } from '../../../lib/notify';
 import {
   IMAGING_DESCRIPTION_MAX,
@@ -43,8 +44,68 @@ interface JinglesSectionProps {
   ) => Promise<JingleImportResult | null>;
   renderTalkPool: (personaId: string) => Promise<void>;
   clearTalkPool: (personaId: string) => Promise<void>;
+  setJingleShows: (filename: string, showIds: string[]) => Promise<boolean>;
   onDelete: (filename: string | null) => void;
   adminFetch: (path: string, init?: RequestInit) => Promise<Response>;
+}
+
+// Which shows a jingle plays in (#1875). Local state, posted on Save: the list
+// is short and a half-ticked checklist is not worth a form library.
+function JingleShowsModal({
+  jingle, shows, busy, onSave, onClose,
+}: {
+  jingle: { filename: string; text?: string; showIds?: string[] };
+  shows: ShowRef[];
+  busy: boolean;
+  onSave: (showIds: string[]) => Promise<boolean>;
+  onClose: () => void;
+}) {
+  // Start from the ids still on the roster, so saving drops a deleted show.
+  const [picked, setPicked] = useState<string[]>(
+    () => (jingle.showIds || []).filter(id => shows.some(s => s.id === id)),
+  );
+  return (
+    <Modal
+      open
+      onOpenChange={(o) => { if (!o) onClose(); }}
+      title="jingle shows"
+      sub="tick the shows this jingle belongs to; none ticked plays it in every show"
+      footer={
+        <>
+          <Button variant="ghost" size="sm" className="min-h-9 sm:min-h-0" onClick={onClose}>Cancel</Button>
+          <Btn
+            sm
+            tone="accent"
+            className="min-h-9 sm:min-h-0"
+            onClick={() => { void onSave(picked).then(ok => { if (ok) onClose(); }); }}
+            disabled={busy}
+          >
+            Save
+          </Btn>
+        </>
+      }
+    >
+      {shows.length === 0 ? (
+        <div className="field-hint">No shows defined, so every jingle plays station-wide.</div>
+      ) : (
+        <div className="grid max-h-56 gap-1 overflow-auto">
+          {shows.map(s => (
+            <label key={s.id} className="flex cursor-pointer items-center gap-2 text-[12px]">
+              <input
+                type="checkbox"
+                checked={!!s.id && picked.includes(s.id)}
+                onChange={() => {
+                  if (!s.id) return;
+                  setPicked(picked.includes(s.id) ? picked.filter(v => v !== s.id) : [...picked, s.id]);
+                }}
+              />
+              <span className="truncate">{s.name || s.id}</span>
+            </label>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
 }
 
 function JingleCreateModal({
@@ -273,7 +334,7 @@ function JingleImportModal({
 
 export function JinglesSection({
   data, busy, jingleRatio, setJingleRatio,
-  createJingle, uploadJingle, saveSettings, renderTalkPool, clearTalkPool, onDelete, adminFetch,
+  createJingle, uploadJingle, saveSettings, renderTalkPool, clearTalkPool, setJingleShows, onDelete, adminFetch,
 }: JinglesSectionProps) {
   const ratioRaw = data.values?.jingleRatio;
   const ratioDirty = jingleRatio !== String(ratioRaw);
@@ -286,6 +347,10 @@ export function JinglesSection({
   const talkSource = TALK_SOURCES.find(id => id === data.values?.talkSource) ?? 'live';
   const talkPool = data.talkPool || [];
   const jingles = data.jingles || [];
+  const shows: ShowRef[] = data.values?.shows || [];
+  const tied = tiedJingleCount(jingles);
+  const [showsFor, setShowsFor] = useState<string | null>(null);
+  const showsJingle = jingles.find(j => j.filename === showsFor) || null;
   const [modal, setModal] = useState<null | 'create' | 'import'>(null);
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null);
   const [importFailures, setImportFailures] = useState<JingleImportFailure[]>([]);
@@ -375,6 +440,12 @@ export function JinglesSection({
             {' '}<strong>Restart the mixer after switching</strong>, or both will count for a
             while and you&rsquo;ll hear twice the jingles.
           </p>
+          {rotateOwner === 'mixer' && tied > 0 && (
+            <p className="m-0 basis-full text-[12px] leading-[1.55] text-muted">
+              <strong>{tied} jingle{tied === 1 ? ' is' : 's are'} tied to shows</strong> and will not rotate while
+              the mixer counts: it cannot know which show is on air. Switch to Controller and restart the mixer.
+            </p>
+          )}
         </div>
       </PanelBox>
 
@@ -441,11 +512,14 @@ export function JinglesSection({
                         <span>{new Date(j.createdAt).toLocaleString('en-GB')}</span>
                       </>
                     )}
+                    <span aria-hidden>·</span>
+                    <span>{jingleShowsLabel(j.showIds, shows)}</span>
                     {j.builtin && <Badge variant="solid">builtin</Badge>}
                     {j.source === 'upload' && <Badge variant="ink">uploaded</Badge>}
                   </MetaLine>
                 </div>
                 <div className="flex flex-none items-center gap-2">
+                  <Btn sm className="min-h-9 sm:min-h-0" onClick={() => setShowsFor(j.filename)} disabled={busy}>Shows</Btn>
                   <PreviewButton
                     path={`/jingles/${encodeURIComponent(j.filename)}/audio`}
                     adminFetch={adminFetch}
@@ -470,6 +544,15 @@ export function JinglesSection({
         )}
       </PanelBox>
 
+      {showsJingle && (
+        <JingleShowsModal
+          jingle={showsJingle}
+          shows={shows}
+          busy={busy}
+          onSave={(ids) => setJingleShows(showsJingle.filename, ids)}
+          onClose={() => setShowsFor(null)}
+        />
+      )}
       {modal === 'create' && (
         <JingleCreateModal busy={busy} createJingle={createJingle} onClose={closeModal} />
       )}

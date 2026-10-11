@@ -183,6 +183,25 @@ export default function ImagingPanel() {
     finally { setBusy(false); }
   };
 
+  const setJingleShows = async (filename: string, showIds: string[]): Promise<boolean> => {
+    setBusy(true);
+    try {
+      await resourceMutation.mutateAsync({
+        path: `/jingles/${encodeURIComponent(filename)}/shows`,
+        init: {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ showIds }),
+        },
+        key: imagingKeys.jingles(),
+      });
+      return true;
+    } catch (e) {
+      notify.err(`Saving shows failed: ${errorMessage(e)}`);
+      return false;
+    } finally { setBusy(false); }
+  };
+
   const deleteJingle = async (filename: string) => {
     setBusy(true);
     try {
@@ -445,6 +464,7 @@ export default function ImagingPanel() {
               createJingle={createJingle} uploadJingle={uploadJingle}
               saveSettings={saveSettings}
               renderTalkPool={renderTalkPool} clearTalkPool={clearTalkPool}
+              setJingleShows={setJingleShows}
               onDelete={setConfirmDelete} adminFetch={adminFetch}
             />
           ) : (
