@@ -212,7 +212,7 @@ export function stationIdPrompt({ context = null, persona = null, timeless = fal
   // A pooled ident (broadcast/talk-pool.ts) is recorded once and replayed on any
   // day, so it gets no context and is told to stay off everything that dates it.
   const clockNudge = timeless
-    ? ' Never mention the time of day, the day, the date, the season, the weather, listener numbers, a song or any show — this line is recorded once and replayed on any day.'
+    ? ' Never mention the time of day, the day, the date, the season, the weather, listener numbers, a song or any show — this line is recorded once and replayed on any day, in any show. Say the station name, optionally your own name, and at most one neutral phrase; do not describe the mood of the moment (calm, quiet, late, early).'
     : speakClockAllowed()
     ? (daypart
         ? ` If you nod to the clock, say only "${daypart}" — never the hour and never the minutes (this airs a few minutes after you write it, and the hour may have changed by then).`

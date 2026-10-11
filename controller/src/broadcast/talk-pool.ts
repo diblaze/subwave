@@ -76,6 +76,19 @@ const usable = (clips: PoolClip[] | undefined, key: string) =>
 
 const rendering = new Set<string>();
 
+// A pooled ident airs on any day, at any hour, in any show. The prompt says so
+// and the model still dates about two lines in five ("mitt på
+// lördagseftermiddagen", "det är natt"), so a line that names a day, a part of
+// the day, a month or a season is thrown away and written again. Swedish and
+// English, because those are the languages this fork's station speaks.
+// ponytail: a fixed word list; move it to a persona-language table if a third language needs it.
+// Stems match anywhere, because Swedish compounds them ("lördagseftermiddagen",
+// "nattens"); the short words need a boundary so "maj" does not catch "majoritet".
+const DATED_STEM = /måndag|tisdag|onsdag|torsdag|fredag|lördag|söndag|morgon|morron|förmiddag|eftermiddag|kväll|natt|helg|januari|februari|augusti|september|oktober|november|december|sommar|höst|vinter|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|tonight|morning|afternoon|evening|midnight/i;
+const DATED_WORD = /\b(idag|i dag|i morse|lunch\w*|mars|april|maj|juni|juli|jul|julen|today|night|summer|autumn|winter)\b/i;
+export const isDatedIdent = (text: string): boolean => DATED_STEM.test(text) || DATED_WORD.test(text);
+const DATED_RETRIES = 3;
+
 export async function counts() {
   const meta = await loadMeta();
   return (settings.get().personas ?? []).map((p: PoolPersona) => ({
@@ -107,8 +120,13 @@ export async function draw(persona: PoolPersona | null | undefined): Promise<{ t
 // rescue voice: that clip would air as the wrong voice for as long as it stayed
 // in the pool, so it is thrown away instead.
 async function renderOne(persona: PoolPersona, openers: string[]): Promise<{ text: string; path: string } | null> {
-  const text = (await dj.generateStationId({ persona, timeless: true, recentOpeners: openers }))?.trim();
-  if (!text) return null;
+  let text = '';
+  for (let attempt = 0; attempt <= DATED_RETRIES; attempt++) {
+    text = (await dj.generateStationId({ persona, timeless: true, recentOpeners: openers }))?.trim() ?? '';
+    if (text && !isDatedIdent(text)) break;
+    text = '';
+  }
+  if (!text) throw new Error('every attempt named a day, a time or a season');
   const started = Date.now();
   // No outPath: each engine picks its own container (wav or mp3). The persona's
   // own speed, not the daypart's: this clip airs at any hour.

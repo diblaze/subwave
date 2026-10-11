@@ -141,3 +141,21 @@ test('rendering keeps the newest twenty, drops other voices, and two hosts do no
   assert.equal(readdirSync(dir).length, Object.values(read()).flat().length, 'a file outlived its entry');
   assert.deepEqual((await talkPool.counts()).find((c: { personaId: string }) => c.personaId === one.id)?.count, talkPool.TALK_POOL_MAX);
 });
+
+test('a pooled ident that names a day, a time or a season is refused', () => {
+  for (const dated of [
+    'Det är mitt på lördagseftermiddagen, och här på stationen rullar vi vidare.',
+    'Det är natt i stan, och du lyssnar på oss.',
+    'Nattens sista timmar, vi håller dig sällskap.',
+    'God morgon, du har vaknat med oss.',
+    'Så här i oktober passar det bra med lite musik.',
+    'Ibland när eftermiddagen drar ut på sig behövs en låt till.',
+    'Good evening, this is your station.',
+  ]) assert.equal(talkPool.isDatedIdent(dated), true, dated);
+  for (const timeless of [
+    'Du lyssnar på stationen med mig, Jocke.',
+    'Här är vår station, och jag är Sanna.',
+    'Stationen där musiken går först. Häng kvar.',
+    'Nathalie här, du har hittat rätt.',
+  ]) assert.equal(talkPool.isDatedIdent(timeless), false, timeless);
+});

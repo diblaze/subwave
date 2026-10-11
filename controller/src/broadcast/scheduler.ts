@@ -815,6 +815,12 @@ export async function runStationId({ atNextTrack = false, automatic = false, sou
   });
 }
 
+// Set when a timed skill marked `replacesHourly` airs or is queued; the hourly
+// row stays down until it passes. Fifteen minutes spans a bulletin written a
+// little before the hour and the hourly row's whole retry window after it.
+const HOURLY_COVER_MS = 15 * 60 * 1000;
+let hourlyCoveredUntil = 0;
+
 // TALK TICK — the one cron owning every spoken segment the station produces on
 // its own. They compete for the listener's ear, so they are rows in one table
 // (talk-scheduler.ts) driven by one per-minute tick (#1500). It carries
@@ -850,6 +856,8 @@ function talkEligible(kind: TalkKind, now: Date, rolled: SessionRoll | null): bo
     // straight over the intro. `introAired` is the extra signal for an intro
     // that aired in this very tick.
     if (programme.suppressHourly(now)) return false;
+    // A timed skill that says the hour itself (replacesHourly) just did so.
+    if (Date.now() < hourlyCoveredUntil) return false;
     if (rolled?.ctx && rolled.introAired) return false;
     if (!shouldFire('hourly', now)) return false;
     if (!djCallsAllowed()) return false;  // nobody listening — stay on the auto playlist
@@ -1230,7 +1238,8 @@ export function syncSkillCrons() {
       try {
         await withTrace({ kind: 'segment' }, async () => {
           const ctx = await prepareEpisodeContext(await getFullContext());
-          await runCapability(cap.kind, ctx, { automaticHostSpeech: true });
+          const run = await runCapability(cap.kind, ctx, { automaticHostSpeech: true });
+          if (cap.replacesHourly && (run.aired || run.queued)) hourlyCoveredUntil = Date.now() + HOURLY_COVER_MS;
         });
       } catch (err: any) {
         queue.log('error', `[skills] cron "${expr}" skill "${cap.kind}" failed: ${err.message}`);

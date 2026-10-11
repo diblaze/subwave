@@ -381,6 +381,10 @@ async function loadSkillDir(dir: string, slug: string, { seeded }: { seeded: boo
     // a skill that later loses its cron line doesn't silently start firing at
     // random again without the operator noticing the coupled field too.
     cronOnly: String(data.cronOnly).trim().toLowerCase() === 'true',
+    // A timed skill that announces the hour itself (a news bulletin opening
+    // "it is eight o'clock"): the hourly time check stands down after it airs,
+    // so the hour is not said twice within minutes.
+    replacesHourly: String(data.replacesHourly).trim().toLowerCase() === 'true',
     // Disk loading stays lenient: only the literal YAML/string true opts in.
     // False, absent and malformed values preserve the historical solo path.
     cohosts: String(data.cohosts).trim().toLowerCase() === 'true',
