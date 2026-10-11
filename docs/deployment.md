@@ -225,7 +225,7 @@ Everything that survives `docker compose down` lives in `state/`:
 | `icecast-secrets.env` | `subwave-icecast` image | Auto-generated Icecast passwords on first boot (mode 0600 — only the root broadcast entrypoint + controller read it) |
 | `session.json` + `sessions/` | Controller | Live DJ session + archived past sessions |
 | `queue.json` | Controller | Track queue snapshot (survives a controller restart) |
-| `jingles/`, `jingles.m3u`, `jingles.json` | Controller / `generate-jingles.sh` | Rendered station idents |
+| `jingles/`, `jingles.m3u`, `jingles.json` | Controller / `generate-jingles.sh` | Rendered station idents; `jingles.json` also holds which shows each is tied to, and `jingles.m3u` lists only the ones open to every show |
 | `voice/` | Controller | TTS WAVs rendered for each spoken segment |
 | `archive/` | Liquidsoap | Hourly MP3 archive (`YYYY-MM-DD/HH-00.mp3`) |
 | `logs/` | Controller + Liquidsoap | Event logs |

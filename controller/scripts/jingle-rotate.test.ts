@@ -38,6 +38,8 @@ const {
   rotateJingleDue,
   pickRotateJingle,
   jingleRotateStatus,
+  rotateJinglePool,
+  SHOW_JINGLE_SHARE,
 } = await import('../src/broadcast/jingle-rotate.js');
 const { jingleRotateSchema } = await import('../src/schemas/settings.js');
 const settings = await import('../src/settings.js');
@@ -352,4 +354,39 @@ test('djTalkOnlyBetweenTracks holds the rotate too', () => {
   });
   assert.equal(plans[0].act, 'wait');
   assert.equal(plans[0].act === 'wait' && plans[0].reason.held, 'pending');
+});
+
+// ---------------------------------------------------------------------------
+// SHOW-TIED JINGLES (#1875) — a stinger written for one show never airs in another
+// ---------------------------------------------------------------------------
+
+const LIB = [
+  { filename: 'open-a.wav', showIds: [] },
+  { filename: 'open-b.wav' },
+  { filename: 'lunch.wav', showIds: ['lunch_show'] },
+  { filename: 'late.wav', showIds: ['late_show'] },
+];
+
+test('a jingle with no show list is open everywhere; a tied one only in its show', () => {
+  assert.deepEqual(rotateJinglePool(LIB, null), ['open-a.wav', 'open-b.wav'], 'no show on air draws the open ones only');
+  assert.deepEqual(rotateJinglePool(LIB, 'morning_show'), ['open-a.wav', 'open-b.wav']);
+  assert.deepEqual(rotateJinglePool(LIB, 'lunch_show', () => 0), ['lunch.wav']);
+  assert.ok(!rotateJinglePool(LIB, 'lunch_show', () => 0.99).includes('late.wav'), 'another show\'s jingle is never a fallback');
+});
+
+test('a show prefers its own jingles without shutting the open ones out', () => {
+  assert.deepEqual(rotateJinglePool(LIB, 'lunch_show', () => SHOW_JINGLE_SHARE - 0.01), ['lunch.wav']);
+  assert.deepEqual(rotateJinglePool(LIB, 'lunch_show', () => SHOW_JINGLE_SHARE), ['open-a.wav', 'open-b.wav']);
+  let own = 0;
+  const seq = Array.from({ length: 1000 }, (_, i) => (i * 0.6180339887) % 1);
+  for (const r of seq) if (rotateJinglePool(LIB, 'lunch_show', () => r)[0] === 'lunch.wav') own++;
+  assert.ok(Math.abs(own / 1000 - SHOW_JINGLE_SHARE) < 0.03, `own share was ${own / 1000}`);
+});
+
+test('with only one kind present there is nothing to weigh, and nothing fitting skips the slot', () => {
+  const tiedOnly = LIB.filter(j => (j.showIds?.length ?? 0) > 0);
+  assert.deepEqual(rotateJinglePool(tiedOnly, 'lunch_show', () => 0.99), ['lunch.wav'], 'no open jingle to fall to');
+  assert.deepEqual(rotateJinglePool(tiedOnly, 'morning_show'), [], 'every jingle belongs to another show');
+  assert.equal(pickRotateJingle(rotateJinglePool(tiedOnly, 'morning_show'), null), null, 'so the slot is skipped');
+  assert.deepEqual(rotateJinglePool([], 'lunch_show'), []);
 });

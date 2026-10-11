@@ -1,6 +1,6 @@
 // Jingle store: WAVs under <stateDir>/jingles/, absolute paths listed one per
 // line in <stateDir>/jingles.m3u, metadata in the <stateDir>/jingles.json
-// sidecar (filename → { text, createdAt, builtin, source }).
+// sidecar (filename → { text, createdAt, builtin, source, showIds? }).
 
 import { readFile, readdir, writeFile, unlink, mkdir, stat, copyFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -55,8 +55,15 @@ let reloadTimer: NodeJS.Timeout | null = null;
 // a Liquidsoap 2.4.5 file watch stops seeing (#2008), so every write is followed
 // by a telnet reload. Never awaited: no write waits on the mixer, and a mixer
 // that is down or has no rotate changes nothing here.
-async function rewritePlaylist(filenames: string[]) {
-  const lines = filenames.map((f: string) => `${DIR}/${f}`);
+//
+// The playlist is what the MIXER may draw from, and the mixer cannot know which
+// show is on air, so it lists only jingles open to every show. A show-tied
+// jingle rotates only when the controller owns the count (jingle-rotate.ts),
+// which never reads this file.
+async function rewritePlaylist(items: Record<string, any>) {
+  const lines = Object.entries(items)
+    .filter(([, info]) => showIdsOf(info).length === 0)
+    .map(([f]) => `${DIR}/${f}`);
   await writeFileAtomic(PLAYLIST, lines.join('\n') + (lines.length ? '\n' : ''));
   scheduleReload();
 }
@@ -68,6 +75,14 @@ function scheduleReload() {
     void reloadJinglesPlaylist();
   }, RELOAD_SETTLE_MS);
   reloadTimer.unref?.();
+}
+
+// The shows a jingle is tied to. Absent or malformed reads as none, which is
+// "every show": the meaning every sidecar written before this field has.
+export function showIdsOf(info: any): string[] {
+  return Array.isArray(info?.showIds)
+    ? [...new Set((info.showIds as unknown[]).filter((v): v is string => typeof v === 'string' && v.length > 0))]
+    : [];
 }
 
 async function statOrNull(p: string) {
@@ -87,6 +102,7 @@ export async function list() {
       createdAt: info.createdAt,
       builtin: !!info.builtin,
       source: info.source || (info.builtin ? 'builtin' : 'tts'),
+      showIds: showIdsOf(info),
       size: s.size,
     });
   }
@@ -145,7 +161,7 @@ export async function create(text: string, { builtin = false, tts }: { builtin?:
     builtin,
   };
   await saveMeta(meta);
-  await rewritePlaylist(Object.keys(meta.items));
+  await rewritePlaylist(meta.items);
   return { filename, text: text.trim(), outPath };
 }
 
@@ -183,7 +199,7 @@ export async function importAudio(
     source: 'upload',
   };
   await saveMeta(meta);
-  await rewritePlaylist(Object.keys(meta.items));
+  await rewritePlaylist(meta.items);
   return { filename, text };
 }
 
@@ -197,8 +213,22 @@ export async function remove(filename: string) {
   try { await unlink(`${DIR}/${filename}`); } catch {}
   delete meta.items[filename];
   await saveMeta(meta);
-  await rewritePlaylist(Object.keys(meta.items));
+  await rewritePlaylist(meta.items);
   return { ok: true };
+}
+
+// Tie a jingle to shows, or to none (`[]` = every show). The caller validates
+// the ids against the roster; this only stores them and rewrites the playlist,
+// since a jingle that gains or loses its last show enters or leaves it.
+export async function setShows(filename: string, showIds: string[]) {
+  const meta = await loadMeta();
+  if (!meta.items[filename]) throw new Error(`unknown jingle: ${filename}`);
+  const ids = showIdsOf({ showIds });
+  if (ids.length) meta.items[filename].showIds = ids;
+  else delete meta.items[filename].showIds;
+  await saveMeta(meta);
+  await rewritePlaylist(meta.items);
+  return { filename, showIds: ids };
 }
 
 // Called from server.js startup. Idempotent; upgrades an older TTS-rendered
@@ -213,7 +243,7 @@ export async function ensureDefaultIdent() {
   if (existsSync(filePath) && existing && (existing.source === 'builtin' || !havePrebaked)) {
     // Rewrite the playlist anyway: entries are absolute paths under the active
     // station dir, and a multi-station move/copy leaves stale ones behind.
-    await rewritePlaylist(Object.keys(meta.items));
+    await rewritePlaylist(meta.items);
     return;
   }
 
@@ -225,9 +255,11 @@ export async function ensureDefaultIdent() {
       createdAt: existing?.createdAt || new Date().toISOString(),
       builtin: true,
       source: 'builtin',
+      // The upgrade replaces the audio, not the operator's choice of shows.
+      ...(showIdsOf(existing).length ? { showIds: showIdsOf(existing) } : {}),
     };
     await saveMeta(meta);
-    await rewritePlaylist(Object.keys(meta.items));
+    await rewritePlaylist(meta.items);
     console.log(`[jingles] installed default station ident from ${PREBAKED_IDENT}`);
     return;
   }
@@ -329,7 +361,7 @@ export async function adopt(
     source: 'upload',
   };
   await saveMeta(meta);
-  await rewritePlaylist(Object.keys(meta.items));
+  await rewritePlaylist(meta.items);
   return { filename: name, text: meta.items[name].text };
 }
 
@@ -364,9 +396,10 @@ export async function restoreMeta(raw: unknown): Promise<{ kept: number; dropped
       ...(typeof info.createdAt === 'string' ? { createdAt: info.createdAt } : {}),
       builtin: info.builtin === true,
       ...(typeof info.source === 'string' ? { source: info.source } : {}),
+      ...(showIdsOf(info).length ? { showIds: showIdsOf(info) } : {}),
     };
   }
   await saveMeta({ items: next });
-  await rewritePlaylist(Object.keys(next));
+  await rewritePlaylist(next);
   return { kept: Object.keys(next).length, dropped };
 }
