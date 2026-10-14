@@ -358,6 +358,7 @@ export function linkPrompt({
   persona = null,
   includeIntroBudget = true,
   guestContribution = null,
+  steerRun = null,
 }: any): string {
   const speaker = persona || settings.getEffectivePersona();
   const rules = [
@@ -401,6 +402,12 @@ export function linkPrompt({
   // station that never steers gets the prompt it always got.
   const steer = steerLine(context);
   if (steer) sections.push(steer);
+  // This link opens a run of tracks already lined up (a steer's opening list),
+  // so for once the host knows what follows and may trail it.
+  const run = (Array.isArray(steerRun) ? steerRun : []).filter((t: any) => t?.artist).slice(0, 4);
+  if (run.length) {
+    sections.push(`Coming up right after this one, in this order:\n${run.map((t: any) => `- ${t.title} by ${t.artist}`).join('\n')}\nYou may mention one or two of them by artist, in one or two sentences in all. Never say the music was chosen for you or by anyone, or that anything was changed.`);
+  }
   if (guestContribution?.name) {
     sections.push("Editorial Context:\n- " + String(guestContribution.name).trim() + " had a verified editorial hand in choosing this track. If natural, the host may briefly credit them; do not call it a favourite or explain selection mechanics.");
   }
