@@ -69,9 +69,9 @@ Branch: `feat/query-language` from `upstream/develop` (operator, 2026-10-15: "th
 - web/components/admin/library/BlockRulesCard.tsx — `useDebounceValue(queryWatch, 250)` → `useAdminQuery` on the preview key (enabled when non-empty); render under the box: `N tracks · "Title — Artist", …`, or the 400's message as a `FieldError` (`applyServerFieldErrors`-shaped body, E17); Save button additionally disabled while the preview reports an error.
 ## Check
 ```
-cd ~/git/subwave-up2 && git log --oneline upstream/develop..HEAD | tail -1 | rg cbf0cab5   # stacked on feat/blocklist-wildcards
-cd controller && npm test -- search-query && npm test -- library-search-pattern && npm test -- blocklist \
-  && npm test -- scene-references && npm test -- library-schema && npm run lint \
+cd ~/git/subwave-up2 && git merge-base --is-ancestor upstream/develop HEAD   # fresh from develop
+cd controller && npm test -- search-query && npm test -- blocklist \
+  && npm test -- scene-references && npm test -- library-schema && npm test -- search-pattern && npm run lint \
   && npm run gen:schemas && git diff --exit-code -- ../web/lib/schemas.generated.ts
 cd ../web && npm run lint && npm test
 cd .. && rg -n "RULE_FIELDS|RuleField|rule\.values|opts\.pattern|searchPattern\(text\)" controller/src web/components; test $? -eq 1
@@ -92,6 +92,11 @@ curl -s -H "Authorization: Bearer $ADMIN" "$API/library/blocklist/rules/preview?
 - SQL-backed `matchCount`/preview (`filter({ query, includeUntagged: true })`) — reopen when the `ruleMatchRows` walk is measurably slow on the Blocked tab (~50k+ tracks); the SQL twin is already there.
 - Friendlier playlist tokens (name instead of id in the row line) — reopen if an operator reports the id as unreadable; ids are what `remapIds` can rewrite.
 - `GET /library/liked` `q` through the query language — reopen when a Liked search box lands (no UI sends it today, E13).
+## Semantics vs liqe's documentation (Context7 /gajus/liqe, re-read at execute, 2026-10-15)
+- Follow liqe: `:` is an unanchored substring; unquoted `*` = one or more characters and `?` = one character, UNANCHORED (liqe `convertWildcardToRegex`: `*`→`(.+?)`, `?`→`(.)`), so `artist:the*` means "the" followed by something anywhere — "starts with" is `artist:/^the/`. Unquoted `true`/`false`/`null`/numbers arrive typed; text fields read `String(value)`. Errors: `SyntaxError {message, offset, line, column}`, plain `Error('Found no parsings.')` (no offset → end of input), `LiqeError('Ambiguous results.')`.
+- Deliberate deviations (documented in search-query.ts and the hint): quoted values are case-INsensitive (liqe: case-sensitive), so search, rules and the *arr convention agree; `:=` on text fields means exact name through `nameKey` (liqe defines `:=` for numbers only; its parser accepts it and we never call liqe's filter/test).
+- re2js: use `RE2JS#test()` (unanchored, captureless DFA path) rather than `matcher().find()`; Unicode classes (`\p{L}`) are on by default.
+
 ## Decisions (operator, 2026-10-15)
 - Rules may use every search field (year, bpm, energy included).
 - Negation-only rules (e.g. `-title:live`) stay refused: a rule must say what it blocks.
