@@ -22,6 +22,7 @@ import { AIRING_RANK_WEIGHT, freshness, freshnessBiasedOrder, lastAiredMsOf, una
 import { normGenre, genreMatches, genreResolutionWarningOnce, preferGenre, preferEra, inYearRange, preferEnergy, preferEnergyStrict, preferMood, preferVocals, applyStrictLocks, hasEraBound, eraSpan, type YearRange, type VocalMode } from './show-filter.js';
 import { resolveShowPlaylistPool, resolveExcludedPlaylistIds, type PlaylistPool } from './show-playlist.js';
 import { allowsMoodPlaylistDiscovery } from './discovery-policy.js';
+import { steeredShow } from './steer.js';
 import { showNoRepeatGuard, strictShowLibraryPool } from './show-recency.js';
 import * as likes from '../broadcast/likes.js';
 import { ARTIST_VARIETY_WINDOW } from '../broadcast/dj-agent/artist-guard.js';
@@ -636,7 +637,11 @@ function slimAlbum(album: string | null | undefined, title: string | null | unde
 export async function pickViaPool(queue, ctx, rankTarget: { bpm: number | null; key: string | null } | null = null, audioWaypoint: number[] | null = null, opts: { avoidArtist?: string | null; avoidAnchorArtist?: string | null } = {}) {
   await library.load();
   ctx = await prepareEpisodeContext(ctx);
-  const episodeSource = showPreparation.read({ context: ctx }).music;
+  // Judged where the pick will air: the context's own instant when it has one.
+  const pickAt = ctx?.at ? new Date(ctx.at) : new Date();
+  const steer = settings.activeSteer(pickAt.getTime());
+  // A steered playlist sets an artist episode aside (see dj-agent.ts).
+  const episodeSource = steer?.playlistId ? null : showPreparation.read({ context: ctx }).music;
   const stats = library.stats();
   // Sized off the MIRROR, not `stats.total`, which counts only tagged tracks.
   const librarySize = stats.mirrorTotal || stats.total;
@@ -653,7 +658,7 @@ export async function pickViaPool(queue, ctx, rankTarget: { bpm: number | null; 
   const currentTrack = queue.upcoming?.at(-1)?.track ?? queue.current?.track ?? null;
   // Prefer the show already resolved into ctx: near a boundary that is a
   // look-ahead, so the pool follows the show on air when the pick plays.
-  const activeShow = ctx?.activeShow !== undefined ? ctx.activeShow : settings.resolveActiveShow();
+  const activeShow = steeredShow(ctx?.activeShow !== undefined ? ctx.activeShow : settings.resolveActiveShow(pickAt), steer);
   const showFilter: ShowFilter = activeShow
     ? {
         moods: activeShow.moods ?? [],
@@ -773,6 +778,7 @@ export async function pickViaPool(queue, ctx, rankTarget: { bpm: number | null; 
   try {
     // Same show-brief plumbing as the agent picker, whose fallback this is.
     pickRaw = await dj.pickNextTrack({
+      steer: steer?.prompt || null,
       show: activeShow
         ? {
             name: activeShow.name,

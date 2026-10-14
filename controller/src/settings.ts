@@ -135,6 +135,7 @@ import {
   normalizeSchedule,
   normalizeScheduleOverride,
   normalizeShows,
+  normalizeSteer,
   normalizeWebhooks,
 } from './settings/normalize.js';
 import {
@@ -144,6 +145,7 @@ import {
   validateScheduleOverrideStrict,
   validateScheduleStrict,
   validateShowsStrict,
+  validateSteerStrict,
   validateTtsBlock,
   validateWebhooksStrict,
 } from './settings/validate.js';
@@ -255,6 +257,7 @@ export {
   getActivePersona,
   getEffectivePersona,
   getOnAirRoster,
+  activeSteer,
   getScheduleOverride,
   guestEditorialNudge,
   guestEditorialNudgeFromGuests,
@@ -264,6 +267,7 @@ export {
   pickOnAirSpeaker,
   renderDjPrompt,
   resolveActiveShow,
+  resolvePickShow,
   resolveOnAirLocation,
   resolvePersonaById,
   resolveShowById,
@@ -802,6 +806,7 @@ export async function load() {
     shows,
     schedule,
     scheduleOverride,
+    steer: normalizeSteer(stored.steer),
     tts: {
       // Station-wide voice switch. Coerce missing/non-boolean (every settings.json
       // written before this key existed) to the default `true`, so an upgrade is
@@ -1760,6 +1765,9 @@ export async function prepareUpdate(patch, { themeIds }: { themeIds?: ReadonlySe
   }
   if ('scheduleOverride' in patch) {
     next.scheduleOverride = validateScheduleOverrideStrict(patch.scheduleOverride, next.shows);
+  }
+  if ('steer' in patch) {
+    next.steer = validateSteerStrict(patch.steer);
   }
   // In-use removal guard: run once the vocabulary AND any same-patch shows are
   // validated, so a mood dropped from the vocab is rejected only if something

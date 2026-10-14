@@ -566,7 +566,7 @@ test('the converted keys are exactly the ones with schemas', () => {
     'pauseTalkMinSeconds', 'personas',
     'picker',
     'privacy', 'requests', 'schedule', 'scheduleOverride', 'scrobble', 'search',
-    'sfx', 'shows', 'silenceTrim', 'station', 'stationDescription', 'stream', 'talkSource',
+    'sfx', 'shows', 'silenceTrim', 'station', 'stationDescription', 'steer', 'stream', 'talkSource',
     'theme', 'timezone', 'transitions', 'ui', 'weather', 'weatherMoods',
     'webhooks', 'webhooksPolicy',
   ]);
