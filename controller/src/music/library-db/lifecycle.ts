@@ -10,6 +10,7 @@ import { DB_PATH, getDb, getEmbeddingDim, requireDb, setHandle } from './handle.
 import { invalidateStats } from './stats.js';
 import { migrate } from './schema.js';
 import { maybeMigrateFromMoodsJson } from './legacy.js';
+import { registerSearchSql } from '../../util/search-pattern.js';
 
 // `reseed`: on an embedding-dim mismatch, drop the stale-dim vectors and rebuild
 // rather than throwing. `adoptStoredDim` (live controller only): the DB's dim
@@ -35,6 +36,7 @@ export async function open(opts: {
     embeddingDim: opts.embeddingDim,
     nonce: randomUUID().slice(0, 8),
   });
+  registerSearchSql(db);
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   // Cap the -wal sidecar so a checkpoint truncates it; uncapped it balloons on a
