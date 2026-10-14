@@ -78,3 +78,12 @@ test('the stamped gain never leaves the operator\'s own range', () => {
   assert.equal(stampedGainDb(12, -7), 5, 'a cut still comes off a high gain');
   assert.equal(stampedGainDb(0, 0), 0);
 });
+
+test('a jingle is trimmed toward the music target, not the voice one', async () => {
+  const { jingleUri } = await import('../src/broadcast/jingles.js');
+  assert.equal(trimDbFor(-25, -14), 11);
+  assert.equal(trimDbFor(-16, -14), 2);
+  assert.equal(trimDbFor(-25), 7, 'voices keep their own target');
+  assert.equal(jingleUri('/j/a.wav', 2), 'annotate:subwave_kind="jingle",liq_amplify="2 dB":/j/a.wav');
+  assert.equal(jingleUri('/j/a.wav'), 'annotate:subwave_kind="jingle":/j/a.wav');
+});

@@ -45,6 +45,7 @@ import { getFullContext, getClockContext, energyForDaypart } from '../context.js
 import * as settings from '../settings.js';
 import { showKeyAt } from './show-boundary.js';
 import { programmeShowKey } from './resume-show.js';
+import { measureClipLevel, trimDbFor } from '../audio/clip-level.js';
 import { TRANSITION_EFFECTS, type TransitionEffect } from '../settings/vocab.js';
 import type { MixDropReason } from '../schemas/transitions.js';
 import { logEvent } from '../observability/events.js';
@@ -3306,7 +3307,12 @@ class Queue {
     if (inFlight >= (rotate ? PENDING_ROTATE_JINGLE_MAX : PENDING_JINGLE_MAX)) {
       return { ok: false as const, reason: 'queue-full' as const };
     }
-    await writeHandoff(config.liquidsoap.jingleFile, jingles.jingleUri(path), { maxWaitMs: 5000 });
+    // A jingle sits on the MUSIC timeline, so it is lifted to the music's
+    // target. Levelled files land at -16 LUFS, a short one far lower (one-pass
+    // loudnorm misreads clips under about 3 s), against tracks at the station
+    // target and a compressor after it.
+    const jingleTrim = trimDbFor(await measureClipLevel(path), settings.get().loudness?.targetLufs);
+    await writeHandoff(config.liquidsoap.jingleFile, jingles.jingleUri(path, jingleTrim), { maxWaitMs: 5000 });
     this._pendingJingles.set(filename, { at: Date.now(), rotate });
     // The sidecar's own script, not the hashed filename: every other segment
     // turn in the booth log and the listener booth carries prose, and
