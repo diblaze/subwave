@@ -33,9 +33,9 @@ export function parseIntegratedLufs(ffmpegStderr: string): number | null {
   return Number.isFinite(lufs) && lufs > MEASURABLE_FLOOR_LUFS ? lufs : null;
 }
 
-export function trimDbFor(lufs: number | null | undefined): number {
+export function trimDbFor(lufs: number | null | undefined, targetLufs = VOICE_TARGET_LUFS): number {
   if (lufs == null) return 0;
-  const trim = Math.max(-VOICE_TRIM_MAX_DB, Math.min(VOICE_TRIM_MAX_DB, VOICE_TARGET_LUFS - lufs));
+  const trim = Math.max(-VOICE_TRIM_MAX_DB, Math.min(VOICE_TRIM_MAX_DB, targetLufs - lufs));
   return Math.round(trim * 10) / 10;
 }
 

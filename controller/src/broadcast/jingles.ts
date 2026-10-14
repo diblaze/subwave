@@ -106,8 +106,11 @@ export async function getPath(filename: string): Promise<string | null> {
 // (queue.playJingle), not the automatic rotate. That queue sits outside
 // music_meta, so retained ID3 tags never reach now-playing or ICY. No
 // cue_out/cross overrides unlike beds.bedUri: a jingle plays in full.
-export function jingleUri(path: string): string {
-  return `annotate:subwave_kind="jingle":${path}`;
+// `gainDb` rides the music chain's own `liq_amplify` override, which is how a
+// track's loudness gain reaches it too.
+export function jingleUri(path: string, gainDb = 0): string {
+  const gain = gainDb !== 0 ? `,liq_amplify="${gainDb} dB"` : '';
+  return `annotate:subwave_kind="jingle"${gain}:${path}`;
 }
 
 export async function create(text: string, { builtin = false, tts }: { builtin?: boolean; tts?: TtsVoiceSlot } = {}) {
