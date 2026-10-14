@@ -1,4 +1,4 @@
-# Wildcard (`*`) values in blocking rules
+# Regex (`/pattern/`) values in blocking rules and Library search
 Status: approved
 Issue: diblaze/subwave#19
 ## Goal
@@ -45,3 +45,11 @@ cd ~/git/subwave-up2/controller && npm run gen:schemas && git diff --exit-code .
 ## Decisions
 - Genre: no glob; genre rules stay exact/refine-only (operator, 2026-10-14).
 - A value that is only `*`: allowed, not refused at the schema; the match count shows it (operator, 2026-10-14).
+
+## Revision (operator, 2026-10-14): JavaScript regex instead of a `*` glob
+The hand-written glob above is superseded: no custom matcher.
+- A rule value written `/pattern/` is a JavaScript `RegExp`, always case-insensitive, tested against the raw metadata of the rule's field (tag/mood/artist/album/title; artist = whole credit, then each `feat.` act). Any other value stays an exact name, so existing rules are unchanged. Genre stays exact.
+- `schemas/blocklist.ts` refuses a `/…/` value that does not compile (mirrored to the web form); the existing 64-char value cap bounds the pattern.
+- Library search: `REGEXP` registered on the better-sqlite3 handle (`db.function`), so `/pattern/` in the search runs in SQLite on title/artist/album; plain text stays a substring `LIKE`. An invalid pattern is a 400.
+- `scene-references.ts` tag mode catches with the same regex.
+- Known ceiling: a catastrophic pattern (e.g. `(a+)+$`) can stall the event loop; admin-only input, 64-char cap. Upgrade path: RE2.
