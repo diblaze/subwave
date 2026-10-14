@@ -4,6 +4,12 @@
 import { SQL_HAS_MOODS, requireDb } from './handle.js';
 import type { FilterOpts, TrackRecord, TrackRow } from './types.js';
 import { parsePaceSpans, rowToTrack, safeParseArray } from './rows.js';
+import { refreshSearchKeys } from './search-keys.js';
+
+// SQL twin of show-filter's resolveEraYear (#842/#1418); the OR is
+// `yearUntrusted`'s composition and the two must move together.
+export const ERA_YEAR_SQL =
+  `COALESCE(original_year, CASE WHEN is_compilation = 1 OR era_untrusted = 1 THEN NULL ELSE year END)`;
 
 export function filter(opts: FilterOpts = {}): { total: number; rows: TrackRecord[] } {
   const moods = (opts.moods || []).filter(Boolean);
@@ -38,10 +44,6 @@ export function filter(opts: FilterOpts = {}): { total: number; rows: TrackRecor
   } else if (vocal === 'vocal') {
     where.push('vocal_ranges_json IS NOT NULL AND json_array_length(vocal_ranges_json) > 0');
   }
-  // SQL twin of show-filter's resolveEraYear (#842/#1418); the OR is
-  // `yearUntrusted`'s composition and the two must move together.
-  const ERA_YEAR_SQL =
-    `COALESCE(original_year, CASE WHEN is_compilation = 1 OR era_untrusted = 1 THEN NULL ELSE year END)`;
   if (yearFrom != null) { where.push(`${ERA_YEAR_SQL} >= ?`); params.push(yearFrom); }
   if (yearTo != null) { where.push(`${ERA_YEAR_SQL} <= ?`); params.push(yearTo); }
   if (q) {
@@ -50,6 +52,12 @@ export function filter(opts: FilterOpts = {}): { total: number; rows: TrackRecor
     );
     const pat = `%${q}%`;
     params.push(pat, pat, pat);
+  }
+  if (opts.query) {
+    // The compiled query reads the stored search keys; bring them up to date.
+    refreshSearchKeys();
+    where.push(`(${opts.query.sql})`);
+    params.push(...opts.query.params);
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
