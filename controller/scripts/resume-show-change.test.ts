@@ -7,6 +7,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { queue } from '../src/broadcast/queue.js';
+import { createStreamIdleMonitor } from '../src/broadcast/stream-idle.js';
+import { resumeIntoAnotherShow } from '../src/broadcast/resume-show.js';
 import { deferred } from './test-utils/async.js';
 
 // Same neutralisation the other queue tests use.
@@ -78,6 +80,49 @@ test('what the new show picked while the fallback rebuilt is left alone', async 
   assert.equal(skips, 0, 'the track now on air belongs to the new show');
   assert.deepEqual(result, { dropped: 0, kept: 0, skipped: false });
 });
+
+for (const [name, showKey] of [
+  ['incoming-show pick', ON_AIR],
+  ['track with unknown ownership', undefined],
+] as const) {
+  test(`the ${name} starting during idle release plays out`, async () => {
+    const releasing = deferred<void>();
+    const acknowledged = deferred<void>();
+    const cleaned = deferred<Awaited<ReturnType<typeof queue.dropProgrammeFromEarlierShow>>>();
+    const fresh = item('fresh', { showKey });
+    const old = item('old');
+    onAir(item('frozen'), [old]);
+    let skips = 0;
+    const monitor = createStreamIdleMonitor({
+      idleStatus: async () => true,
+      idleOff: () => { releasing.resolve(); return acknowledged.promise; },
+      refresh: async () => {}, gatedListenerCount: () => 1,
+      streamSettings: () => ({ idleWhenEmpty: true }),
+      setStreamIdle: () => {}, warmHeavy: async () => {}, log: () => {},
+      showKeyAt: () => ON_AIR,
+      onResume: async ({ showChanged }) => {
+        if (!showChanged) throw new Error('expected changed-show cleanup');
+        await resumeIntoAnotherShow({
+          snapshot: () => queue.snapshotProgramme(ON_AIR),
+          rebuild: async () => 'refreshed',
+          drop: async stale => {
+            cleaned.resolve(await queue.dropProgrammeFromEarlierShow(stale, async () => { skips++; }));
+          },
+          log: () => {},
+        });
+      },
+    });
+    await monitor.initialize();
+    const tick = monitor.tick();
+    await releasing.promise;
+    queue.current = fresh;
+    acknowledged.resolve();
+    await tick;
+    assert.deepEqual(await cleaned.promise, { dropped: 1, kept: 0, skipped: false });
+    assert.equal(skips, 0);
+    assert.equal(queue.current, fresh);
+  });
+}
 
 test('a pick the mixer will not give back is reported as kept', async () => {
   const stuck = item('stuck');

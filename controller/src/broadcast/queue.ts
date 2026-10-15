@@ -4089,11 +4089,16 @@ class Queue {
   // chosen for the show on air stays, whenever it was queued: a pick aimed
   // across the boundary, or one queued while the programme was paused.
   snapshotProgramme(onAirShow: string): { current: QueueItem | null; upcoming: QueueItem[] } {
-    return { current: this.current, upcoming: this.upcoming.filter(i => {
-      if (i.requestedBy) return false;
-      const key = programmeShowKey(i);
+    const isEarlierShow = (item: QueueItem | null) => {
+      if (!item || item.requestedBy) return false;
+      const key = programmeShowKey(item);
       return key !== null && key !== onAirShow;
-    }) };
+    };
+    // The mixer can start a new track before idle_off is acknowledged.
+    return {
+      current: isEarlierShow(this.current) ? this.current : null,
+      upcoming: this.upcoming.filter(isEarlierShow),
+    };
   }
 
   // The programme paused in one show and resumed in another (stream-idle.ts).
