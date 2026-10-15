@@ -4104,13 +4104,13 @@ class Queue {
   // The programme paused in one show and resumed in another (stream-idle.ts).
   // The frozen track and the picks queued behind it were chosen for the earlier
   // show: an afternoon floor-filler would otherwise play on into the night
-  // programme. Remove those picks and skip that track. Only what `stale` holds
-  // is touched, and requests are kept and never skipped: someone asked for
-  // those, whatever the hour. The caller rebuilds and reloads the fallback
+  // programme. Remove those picks and skip that track (`skip: null` leaves it
+  // on air). Only what `stale` holds is touched, and requests are kept and
+  // never skipped: someone asked for those, whatever the hour. The caller rebuilds and reloads the fallback
   // first, or the skip lands on a track Liquidsoap prefetched from the old one.
   async dropProgrammeFromEarlierShow(
     stale: { current: QueueItem | null; upcoming: QueueItem[] },
-    skip: () => Promise<unknown> = liquidsoapControl.skipTrack,
+    skip: (() => Promise<unknown>) | null = liquidsoapControl.skipTrack,
   ): Promise<{ dropped: number; kept: number; skipped: boolean }> {
     let dropped = 0;
     let kept = 0;
@@ -4121,16 +4121,20 @@ class Queue {
       else kept += 1;
     }
     // onTrackStarted replaces `current` on every start, so identity tells the
-    // frozen track from one that began while the fallback was rebuilding. A
-    // pick the mixer would not give back airs next anyway, so cutting the
-    // frozen track short would only bring that one forward.
+    // frozen track, or an earlier-show pick that started while the fallback was
+    // rebuilding, from anything else on air. A pick the mixer would not give
+    // back airs next anyway, so cutting the track short would only bring that
+    // one forward.
+    const leftover = (item: QueueItem | null) =>
+      !!item && !item.requestedBy && (item === stale.current || stale.upcoming.includes(item));
     let skipped = false;
-    if (stale.current && this.current === stale.current && !stale.current.requestedBy && kept === 0) {
+    if (skip && leftover(this.current) && kept === 0) {
       try {
         // A kept request must be committed in dj_queue or the skip airs the fallback instead.
         await this.commitBeforeSkip();
-        // Playback can advance while the commit waits for a resolved request.
-        if (this.current === stale.current && !stale.current.requestedBy) {
+        // Playback can advance while the commit waits for a resolved request:
+        // skip whatever is on air then, if it is still one of the earlier show's.
+        if (leftover(this.current)) {
           await skip();
           skipped = true;
         }

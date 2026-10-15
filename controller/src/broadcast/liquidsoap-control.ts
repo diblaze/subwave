@@ -132,19 +132,25 @@ export async function subhttpProbeOutcome(probeId: string): Promise<ResolveProbe
   }
 }
 
-// Force auto.m3u to re-read from disk. The playlist's reload_mode="watch"
-// inotify watch orphans itself because the controller rewrites the file by
-// atomic rename (new inode), and a missed watch loops the last snapshot forever
-// (#874). Liquidsoap 2.4.6 fixed the orphaned watch upstream (#3343), so on
-// that image the watch and this reload BOTH fire; keep both (the extra watch
-// reload is one harmless reshuffle, and older mixers still need this one).
-// Best-effort: errors are swallowed so a refresh never fails here.
+// Re-read auto.m3u. The playlist's file watch reloads it too (fixed on 2.4.6,
+// #3343), but a watch reload only empties the queue: off air, this command makes
+// radio.liq replace the playlist, dropping a track the old one had already
+// prepared, so OK means the old fallback is gone. Best-effort: errors are
+// swallowed so a refresh never fails here.
 export async function reloadAutoPlaylist(): Promise<boolean> {
   try {
     return await sendCommand('auto.reload', 2000, { requireComplete: true }) === 'OK';
   } catch {
     return false;
   }
+}
+
+// Whether the fallback has a track ready to air: after auto.reload the mixer's
+// fresh playlist fetches its first track first (radio.liq `auto.ready`). A mixer
+// older than that command has no ready signal to wait for: carry on at once.
+export async function autoPlaylistReady(): Promise<boolean> {
+  const reply = await sendCommand('auto.ready', 2000);
+  return reply === 'ready' || /unknown command/i.test(String(reply));
 }
 
 // stream_off disconnects the Icecast mounts (station off air); stream_on

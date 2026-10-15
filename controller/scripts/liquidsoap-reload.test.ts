@@ -14,7 +14,7 @@ const address = mixer.address();
 if (!address || typeof address === 'string') throw new Error('mixer has no TCP port');
 process.env.LIQUIDSOAP_HOST = '127.0.0.1';
 process.env.LIQUIDSOAP_PORT = String(address.port);
-const { reloadAutoPlaylist, sendCommand } = await import('../src/broadcast/liquidsoap-control.js');
+const { autoPlaylistReady, reloadAutoPlaylist, sendCommand } = await import('../src/broadcast/liquidsoap-control.js');
 
 after(async () => {
   await new Promise<void>((resolve, reject) => mixer.close(err => err ? reject(err) : resolve()));
@@ -42,3 +42,17 @@ test('other telnet callers retain their close-without-END behaviour', async () =
   reply = 'partial reply';
   assert.equal(await sendCommand('legacy'), 'partial reply');
 });
+
+for (const [name, response, ready] of [
+  ['ready', 'ready\nEND\n', true],
+  ['pending', 'pending\nEND\n', false],
+  // A mixer older than auto.ready has no signal to wait for.
+  ['a mixer without the command', 'ERROR: unknown command, type "help" to get a list of commands.\nEND\n', true],
+] as const) {
+  test(`fallback readiness reads ${name}`, async () => {
+    reply = response;
+    commands.length = 0;
+    assert.equal(await autoPlaylistReady(), ready);
+    assert.deepEqual(commands, ['auto.ready']);
+  });
+}

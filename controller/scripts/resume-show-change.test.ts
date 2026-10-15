@@ -73,7 +73,7 @@ test('what the new show picked while the fallback rebuilt is left alone', async 
   const stale = queue.snapshotProgramme(ON_AIR);
   // The rebuild takes seconds: the frozen track ends and the new show picks.
   const fresh = item('fresh');
-  onAir(item('new-show-track'), [fresh]);
+  onAir(item('new-show-track', { showKey: ON_AIR }), [fresh]);
   let skips = 0;
   const result = await queue.dropProgrammeFromEarlierShow(stale, async () => { skips += 1; });
   assert.deepEqual(queue.upcoming, [fresh]);
@@ -105,6 +105,7 @@ for (const [name, showKey] of [
         await resumeIntoAnotherShow({
           snapshot: () => queue.snapshotProgramme(ON_AIR),
           rebuild: async () => 'refreshed',
+          ready: async () => true,
           drop: async stale => {
             cleaned.resolve(await queue.dropProgrammeFromEarlierShow(stale, async () => { skips++; }));
           },
@@ -123,6 +124,25 @@ for (const [name, showKey] of [
     assert.equal(queue.current, fresh);
   });
 }
+
+test('an earlier-show pick that started while the fallback rebuilt is skipped', async () => {
+  const old = item('old');
+  onAir(item('frozen'), [old]);
+  const stale = queue.snapshotProgramme(ON_AIR);
+  // The frozen track ends during the rebuild and the next earlier-show pick starts.
+  onAir(old, []);
+  let skips = 0;
+  const result = await queue.dropProgrammeFromEarlierShow(stale, async () => { skips += 1; });
+  assert.equal(skips, 1);
+  assert.deepEqual(result, { dropped: 0, kept: 0, skipped: true });
+});
+
+test('without a skip the picks go and the frozen track stays on air', async () => {
+  onAir(item('frozen'), [item('a')]);
+  const result = await queue.dropProgrammeFromEarlierShow(queue.snapshotProgramme(ON_AIR), null);
+  assert.deepEqual(queue.upcoming, []);
+  assert.deepEqual(result, { dropped: 1, kept: 0, skipped: false });
+});
 
 test('a pick the mixer will not give back is reported as kept', async () => {
   const stuck = item('stuck');
@@ -160,13 +180,47 @@ test('resume: snapshot first, drop only after a confirmed rebuild', async () => 
   const run = (result: 'refreshed' | 'unreloaded' | 'deferred') => resumeIntoAnotherShow({
     snapshot: () => { order.push('snapshot'); return { current: null, upcoming: [] }; },
     rebuild: async () => { order.push('rebuild'); return result; },
-    drop: async () => { order.push('drop'); },
+    ready: async () => { order.push('ready'); return true; },
+    drop: async (_stale, { skip }) => { order.push(`drop:${skip}`); },
     log: line => order.push(`log:${line.slice(0, 12)}`),
   });
   assert.equal(await run('refreshed'), true);
-  assert.deepEqual(order.splice(0), ['snapshot', 'rebuild', 'drop']);
+  assert.deepEqual(order.splice(0), ['snapshot', 'rebuild', 'ready', 'drop:true']);
   for (const result of ['unreloaded', 'deferred'] as const) {
     assert.equal(await run(result), false, result);
     assert.deepEqual(order.splice(0), ['snapshot', 'rebuild', 'log:show changed'], result);
   }
+});
+
+test('resume: the skip waits until the new fallback has a track ready', async () => {
+  const { resumeIntoAnotherShow } = await import('../src/broadcast/resume-show.js');
+  const order: string[] = [];
+  const answers = [false, false, true];
+  await resumeIntoAnotherShow({
+    snapshot: () => ({ current: null, upcoming: [] }),
+    rebuild: async () => 'refreshed',
+    ready: async () => { const r = answers.shift()!; order.push(`ready:${r}`); return r; },
+    drop: async (_stale, { skip }) => { order.push(`drop:${skip}`); },
+    log: line => order.push(`log:${line}`),
+    pollMs: 1,
+  });
+  // The fresh playlist fetches its first track after the reload; skipping
+  // before it is ready would air the emergency loop until it arrives.
+  assert.deepEqual(order, ['ready:false', 'ready:false', 'ready:true', 'drop:true']);
+});
+
+test('resume: a fallback that never gets ready drops the picks but not the track on air', async () => {
+  const { resumeIntoAnotherShow } = await import('../src/broadcast/resume-show.js');
+  const order: string[] = [];
+  await resumeIntoAnotherShow({
+    snapshot: () => ({ current: null, upcoming: [] }),
+    rebuild: async () => 'refreshed',
+    ready: async () => false,
+    drop: async (_stale, { skip }) => { order.push(`drop:${skip}`); },
+    log: () => order.push('log'),
+    pollMs: 1,
+    waitMs: 10,
+  });
+  // A skip would air the emergency loop until the new fallback has a track.
+  assert.deepEqual(order, ['log', 'drop:false']);
 });
