@@ -216,3 +216,31 @@ test('resume in the show the frozen track started under reports no change', asyn
 test('with nothing on air there is no frozen track to judge', async () => {
   assert.deepEqual(await resumeFromAdoptedPause(nightThenMorning, { startedAt: null }), [{ showChanged: false }]);
 });
+
+for (const statusFails of [false, true]) {
+  test(`an unconfirmed startup release cannot clean up a show after a ${statusFails ? 'failed' : 'timed-out'} status read`, async () => {
+    let offCalls = 0;
+    let releases = 0;
+    const seen: { showChanged: boolean }[] = [];
+    const monitor = createStreamIdleMonitor({
+      idleStatus: () => statusFails ? Promise.reject(new Error('telnet down')) : new Promise<boolean>(() => {}),
+      idleOff: async () => {
+        if (++offCalls === 1) throw new Error('telnet still down');
+        releases++;
+      },
+      refresh: async () => {}, gatedListenerCount: () => 1,
+      streamSettings: () => ({ idleWhenEmpty: false, idleAfterMinutes: 1 }),
+      setStreamIdle: () => {}, warmHeavy: async () => {}, log: () => {},
+      frozenTrackShowKey: () => 'show:night', showKeyAt: () => 'show:morning',
+      onResume: async info => { seen.push(info); },
+    });
+    await monitor.initialize(1);
+    await monitor.tick();
+    assert.deepEqual(seen, [], 'a failed release still retries');
+    await monitor.tick();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(releases, 1);
+    assert.equal(monitor.isIdle(), false);
+    assert.deepEqual(seen, [{ showChanged: false }], 'flush deferred work without dropping programme');
+  });
+}

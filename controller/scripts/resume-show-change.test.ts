@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { queue } from '../src/broadcast/queue.js';
+import { deferred } from './test-utils/async.js';
 
 // Same neutralisation the other queue tests use.
 (queue as any).persist = () => {};
@@ -45,6 +46,25 @@ test('a request someone asked for survives, on air or queued', async () => {
   assert.equal(skips, 0, 'a requested track on air plays out');
   assert.deepEqual(result, { dropped: 1, kept: 0, skipped: false });
 });
+
+for (const [name, extra] of [
+  ['listener request', { requestedBy: 'Anna' }],
+  ['studio pick', { requestedBy: 'studio', operator: true }],
+  ['new-show pick', { showKey: ON_AIR }],
+] as const) {
+  test(`a ${name} that starts during skip preparation plays out`, async t => {
+    const prepared = deferred<Awaited<ReturnType<typeof queue.commitBeforeSkip>>>();
+    t.mock.method(queue, 'commitBeforeSkip', () => prepared.promise);
+    const next = item('next', extra);
+    onAir(item('frozen'), [next]);
+    let skips = 0;
+    const pending = queue.dropProgrammeFromEarlierShow(queue.snapshotProgramme(ON_AIR), async () => { skips += 1; });
+    onAir({ ...next }, []);
+    prepared.resolve({ pending: false, committed: false, waitedMs: 500 });
+    assert.deepEqual(await pending, { dropped: 0, kept: 0, skipped: false });
+    assert.equal(skips, 0, 'skip preparation cannot authorise cutting a different track');
+  });
+}
 
 test('what the new show picked while the fallback rebuilt is left alone', async () => {
   onAir(item('frozen'), [item('old')]);

@@ -9,6 +9,7 @@ import { idleOn, idleOff, idleStatus } from './liquidsoap-control.js';
 import { queue } from './queue.js';
 import { nextIdleState, type IdleState } from './stream-idle-pure.js';
 import { showKeyAt } from './show-boundary.js';
+import { programmeShowKey } from './resume-show.js';
 
 // One tick every 5s. Live: read the 15s monitor's cached count. Idle: force a
 // fresh poll, so a new listener waits ~5s (worst case ~8s, since the forced
@@ -46,13 +47,7 @@ export function createStreamIdleMonitor(overrides: Partial<{
     // answers for a pause the previous process started. A queued pick carries
     // the show it was chosen for; a track the fallback started does not, and
     // is judged by when it started.
-    frozenTrackShowKey: () => {
-      const current = queue.current;
-      if (!current) return null;
-      if (current.showKey) return current.showKey;
-      const ms = Date.parse(current.startedAt || '');
-      return Number.isFinite(ms) ? showKeyAt(ms) : null;
-    },
+    frozenTrackShowKey: () => programmeShowKey(queue.current),
     onResume: async (_info: ResumeInfo) => {},
     ...overrides,
   };
@@ -93,6 +88,8 @@ export function createStreamIdleMonitor(overrides: Partial<{
     // before starting a fresh empty-room grace window, and retry on failure
     // without waiting for the original status read to finish.
     const action = startupReleasePending ? 'resume' : plannedAction;
+    // An unknown startup gate needs releasing, but proves no programme was paused.
+    const showChanged = action === 'resume' && state.idle && frozenTrackIsFromAnotherShow();
     try {
       if (action === 'pause') {
         await deps.idleOn();
@@ -131,7 +128,7 @@ export function createStreamIdleMonitor(overrides: Partial<{
       // Playback is already live. Failures here must not roll the idle state
       // back, delay the frozen track, or prevent later monitor ticks.
       void Promise.resolve()
-        .then(() => deps.onResume({ showChanged: frozenTrackIsFromAnotherShow() }))
+        .then(() => deps.onResume({ showChanged }))
         .catch(err => deps.log('error', `Work after resume failed: ${err.message}`));
     }
   }
