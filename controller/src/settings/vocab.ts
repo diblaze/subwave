@@ -148,7 +148,7 @@ export const TTS_ENGINES: readonly string[] = TTS_ENGINE_VALUES;
 export { PERSONA_TTS_INHERIT };
 
 // DJ-voice trim in dB via Liquidsoap's `liq_amplify` annotation. The operator's
-// manual dial; each clip's levelling trim (audio/clip-level.ts) is added to it,
+// manual dial; opt-in clip levelling (audio/clip-level.ts) is added to it,
 // and the total stays inside this same range.
 export const TTS_GAIN_CLAMP_DB = TTS_GAIN_CLAMP_DB_VALUE;
 

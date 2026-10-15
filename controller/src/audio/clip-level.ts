@@ -1,8 +1,8 @@
 // Evens out voice clips. A cloud voice hands back takes that differ by 10 dB
 // and more from one line to the next (ElevenLabs measured -13 to -27 LUFS on
 // one voice), so one speaker of an exchange lands far under the other and
-// under the music. Each rendered clip is measured once, and the handoff to the
-// mixer trims it toward one level on top of the operator's own gain.
+// under the music. When enabled, each rendered clip is measured once, and the
+// handoff trims it toward one level on top of the operator's own gain.
 //
 // The trim lifts as far as it cuts, where music loudness caps its lift lower
 // (loudness.maxBoostDb): the quiet takes are the fault being fixed here, and
@@ -11,6 +11,7 @@
 
 import { spawn } from 'node:child_process';
 import { TTS_GAIN_CLAMP_DB } from '../schemas/persona.js';
+import * as settings from '../settings.js';
 
 export const VOICE_TARGET_LUFS = -18;
 // A take further off than this is trimmed only this far: past it the measure
@@ -21,6 +22,10 @@ const MEASURABLE_FLOOR_LUFS = -50;
 const REMEMBERED = 400;
 
 const levels = new Map<string, number>();
+
+export function voiceLevellingEnabled(): boolean {
+  return settings.get().tts?.voiceLevelling === true;
+}
 
 // Integrated loudness from ffmpeg's ebur128 summary, or null when it has none.
 export function parseIntegratedLufs(ffmpegStderr: string): number | null {

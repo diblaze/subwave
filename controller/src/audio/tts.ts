@@ -4,7 +4,7 @@
 import * as piper from './piper.js';
 import * as kokoro from './kokoro.js';
 import { applyEdgeFades } from './wav-edges.js';
-import { measureClipLevel } from './clip-level.js';
+import { measureClipLevel, voiceLevellingEnabled } from './clip-level.js';
 import * as chatterbox from './chatterbox.js';
 import * as pocketTts from './pocketTts.js';
 import { heavyColdEngines, heavyEnabledEngines } from './ttsHeavyClient.js';
@@ -169,8 +169,8 @@ function fallbackChain(primary: TtsTarget): RescueSlot[] {
 
 // Voice level trim (dB) for a segment of `kind`: per-engine gain plus the
 // persona's own trim, clamped to ±TTS_GAIN_CLAMP_DB. 0 = unity. The handoff to
-// the mixer adds each clip's own levelling trim and clamps the total to the
-// same range (audio/clip-level.ts) before it becomes the `liq_amplify` annotation. Uses the
+// the mixer optionally adds each clip's levelling trim and clamps the total to
+// the same range (audio/clip-level.ts) before stamping `liq_amplify`. Uses the
 // RESOLVED engine so the gain matches whichever engine actually speaks.
 export function voiceGainDb(kind: string, persona?: any): number {
   const personaTts = djPersonaTts(kind, persona);
@@ -387,12 +387,11 @@ export async function synthesizeSample(
 }
 
 // Every rendered clip, whichever engine made it: edge fades (WAV only), then
-// its level, measured once here so the handoff to the mixer can trim it. A
-// jingle never takes that handoff (it airs from the jingle playlist), so it
-// is not measured.
+// opt-in levelling, measured once here for the handoff to the mixer. A jingle
+// never takes that handoff (it airs from the playlist), so it is not measured.
 async function finishClip(path: string, kind?: string): Promise<void> {
   await applyEdgeFades(path);
-  if (kind !== 'jingle') await measureClipLevel(path);
+  if (kind !== 'jingle' && voiceLevellingEnabled()) await measureClipLevel(path);
 }
 
 // Public entry point. Tries the configured engine; on failure falls back so the
