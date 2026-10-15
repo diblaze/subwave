@@ -101,3 +101,10 @@ curl -s -H "Authorization: Bearer $ADMIN" "$API/library/blocklist/rules/preview?
 - Rules may use every search field (year, bpm, energy included).
 - Negation-only rules (e.g. `-title:live`) stay refused: a rule must say what it blocks.
 - Fresh from upstream/develop; supersedes feat/blocklist-wildcards (diblaze/subwave#19).
+
+## Execution notes (S0 + S1, 2026-10-15)
+- Stored search keys replaced per-row JS UDFs (operator: "Never keep ponytail: markers. Always fix them"): migration 29 adds `title_key`, `artist_key`, `album_key`, `artist_keys`, `genre_keys`, `genre_runs`, `tag_keys`, `mood_keys`, `search_fresh`; a pure-SQL stale trigger + partial index; `library-db/search-keys.ts` `refreshSearchKeys()` before a query search; filled at migration. 200k bench: searches within ~80 ms of the no-search browse floor (196–213 ms); `tag:christmas` 1.7 s → 287 ms. A `COUNT(*) OVER ()` single pass was tried and reverted (blocks SQLite's top-N sort: 728 ms vs 200 ms).
+- `genre-fold.ts` leaf (normGenre, tagCoversGenre, genreRuns = tagCoversGenre as data, parity-tested) removes the library-db → show-filter → library import cycle; no query UDFs remain except `search_match` and `fold` (wildcards on lists).
+- Search-key columns are WALK_OWNED for id adoption (derived; new row re-keys).
+- Final review fixes: NULL-safe NOT on numbers/energy (IFNULL), energy values validated, 500-char query cap, clearer "ends early" message, dead liqe branches removed, commit messages corrected.
+- Coverage: search-query, search-pattern, search-keys, genre-fold at 100% branches/functions; verify-library-search.py 19/19; full suite 4135/4135.
