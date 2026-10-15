@@ -3,8 +3,20 @@
 // snapshot before any await, rebuild the fallback, drop only after a
 // confirmed rebuild and reload.
 import type { RefreshResult } from './auto-playlist-refresh.js';
+import type { QueueItem } from './queue/types.js';
+import { showKeyAt } from './show-boundary.js';
 
 type Programme = { current: unknown; upcoming: unknown[] };
+
+// Preserve stamps across schedule edits. Legacy picks use their selection
+// forecast, then enqueue time; an untracked fallback has only its start time.
+export function programmeShowKey(item: Pick<QueueItem, 'showKey' | 'selectionShowAt' | 'queuedAt' | 'startedAt'> | null): string | null {
+  if (!item) return null;
+  if (item.showKey) return item.showKey;
+  const at = [item.selectionShowAt, Date.parse(item.queuedAt || ''), Date.parse(item.startedAt || '')]
+    .find(ms => typeof ms === 'number' && Number.isFinite(ms));
+  return at == null ? null : showKeyAt(at);
+}
 
 export async function resumeIntoAnotherShow<P extends Programme>({ snapshot, rebuild, drop, log }: {
   snapshot: () => P;

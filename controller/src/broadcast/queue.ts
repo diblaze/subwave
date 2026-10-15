@@ -44,6 +44,7 @@ import { promptRecapEntries, VERBATIM_META } from './prompt-memory.js';
 import { getFullContext, getClockContext, energyForDaypart } from '../context.js';
 import * as settings from '../settings.js';
 import { showKeyAt } from './show-boundary.js';
+import { programmeShowKey } from './resume-show.js';
 import { TRANSITION_EFFECTS, type TransitionEffect } from '../settings/vocab.js';
 import type { MixDropReason } from '../schemas/transitions.js';
 import { logEvent } from '../observability/events.js';
@@ -4088,7 +4089,11 @@ class Queue {
   // chosen for the show on air stays, whenever it was queued: a pick aimed
   // across the boundary, or one queued while the programme was paused.
   snapshotProgramme(onAirShow: string): { current: QueueItem | null; upcoming: QueueItem[] } {
-    return { current: this.current, upcoming: this.upcoming.filter(i => !i.requestedBy && i.showKey !== onAirShow) };
+    return { current: this.current, upcoming: this.upcoming.filter(i => {
+      if (i.requestedBy) return false;
+      const key = programmeShowKey(i);
+      return key !== null && key !== onAirShow;
+    }) };
   }
 
   // The programme paused in one show and resumed in another (stream-idle.ts).
@@ -4119,8 +4124,11 @@ class Queue {
       try {
         // A kept request must be committed in dj_queue or the skip airs the fallback instead.
         await this.commitBeforeSkip();
-        await skip();
-        skipped = true;
+        // Playback can advance while the commit waits for a resolved request.
+        if (this.current === stale.current && !stale.current.requestedBy) {
+          await skip();
+          skipped = true;
+        }
       } catch (err) {
         this.log('error', `could not skip the track left over from the earlier show: ${(err as Error).message}`);
       }
