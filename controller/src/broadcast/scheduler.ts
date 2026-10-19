@@ -592,9 +592,10 @@ async function refreshAutoPlaylistInner(canPublish: () => boolean): Promise<Refr
   // between the freshness check and rename. Catalogue work stays asynchronous.
   writeFileAtomicSync(config.liquidsoap.autoPlaylist, lines.join('\n'));
   coastOnDisk = coastContents(pool, builtAt);
-  // Reload over telnet as well as the file watch: off air, radio.liq replaces the
-  // playlist, dropping a track the old one had already prepared;
-  // best-effort, so an unreachable mixer never fails the refresh.
+  // Reload over telnet; radio.liq's file watch only re-reads a write this
+  // reload never reached. Off air, radio.liq replaces the playlist, dropping a
+  // track the old one had already prepared; best-effort, so an unreachable
+  // mixer never fails the refresh.
   const reloaded = await reloadAutoPlaylist();
   if (!reloaded) queue.log('scheduler', 'Auto-playlist written but the mixer did not confirm the reload — the file watch re-reads it; an off-air playlist is replaced on the next refresh');
 
