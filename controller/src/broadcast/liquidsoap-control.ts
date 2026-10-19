@@ -132,9 +132,9 @@ export async function subhttpProbeOutcome(probeId: string): Promise<ResolveProbe
   }
 }
 
-// Re-read auto.m3u. The playlist's file watch reloads it too (fixed on 2.4.6,
-// #3343), but a watch reload only empties the queue: off air, this command makes
-// radio.liq replace the playlist, dropping a track the old one had already
+// Re-read auto.m3u. radio.liq's file watch is only the backup for a write this
+// never followed, and its reload only empties the queue: off air, this command
+// makes radio.liq replace the playlist, dropping a track the old one had already
 // prepared, so OK means the old fallback is gone. Best-effort: errors are
 // swallowed so a refresh never fails here.
 export async function reloadAutoPlaylist(): Promise<boolean> {

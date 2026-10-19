@@ -393,18 +393,22 @@ end)
 # drops whatever the old one prepared; when it is on air, a plain reload, and the
 # controller's skip ends the track. `OK` means the old fallback is gone.
 #
-# Each instance also watches auto.m3u (a watch reload, like `auto.reload` on air,
-# only empties the queue); a replaced instance's watch stops with it. Pinned by
-# scripts/liquidsoap-resume-fallback.py. register_server_commands=false: every
-# instance would register auto.skip/auto.next/auto.uri again (nothing calls
-# them); radio.liq registers auto.reload and auto.ready below.
+# The instances do not watch auto.m3u themselves: radio.liq watches it once
+# (below) and reloads only contents no reload has read yet. The controller's
+# write is followed by `auto.reload` at once, and a playlist's own watch would
+# reload that same write again 0.5s later, emptying the queue `auto.ready` had
+# just reported, so a resume skip landing then aired the emergency loop. Pinned
+# by scripts/liquidsoap-resume-fallback.py. register_server_commands=false:
+# every instance would register auto.skip/auto.next/auto.uri again (nothing
+# calls them); radio.liq registers auto.reload and auto.ready below.
+auto_m3u = "#{state_dir}/auto.m3u"
 def make_auto_playlist() =
   playlist(
     id="auto",
     register_server_commands=false,
-    reload_mode="watch",
+    reload_mode="never",
     mode="randomize",
-    "#{state_dir}/auto.m3u"
+    auto_m3u
   )
 end
 auto_playlist = ref(make_auto_playlist())
@@ -432,12 +436,25 @@ auto_on_air = ref(false)
 dj_queue.on_track(synchronous=true, fun (_) -> auto_on_air := false)
 auto_slot.on_track(synchronous=true, fun (_) -> auto_on_air := true)
 
+# What the last reload read from auto.m3u. The watch below skips a write this
+# already holds; `auto.reload` always reloads.
+def read_auto_m3u() =
+  try
+    file.contents(auto_m3u)
+  catch err do
+    log(label="subwave", "auto.m3u unreadable (#{err})")
+    ""
+  end
+end
+auto_m3u_loaded = ref(read_auto_m3u())
+
 server.register(
   namespace="auto",
   "reload",
   description="Reload auto.m3u; off air, a fresh playlist replaces the one holding a prepared track",
   usage="reload",
   fun (_) -> begin
+    auto_m3u_loaded := read_auto_m3u()
     if auto_on_air() then
       auto_playlist().reload()
     else
@@ -471,6 +488,44 @@ server.register(
     ready ? "ready" : "pending"
   end
 )
+
+# The backup for a write whose `auto.reload` never arrived: reload the playlist
+# in place, as a playlist's own watch would (an off-air one keeps the track it
+# prepared until the next `auto.reload`). Settled like the stdlib's watch, so a
+# writer that truncates first is read once it is done. Only the server thread
+# replaces the instance; this thread never stores one. Never raises: it runs
+# in thread.run.
+auto_watch_scheduled = ref(false)
+def auto_m3u_changed() =
+  if
+    not auto_watch_scheduled()
+  then
+    auto_watch_scheduled := true
+    thread.run(
+      delay=0.5,
+      fun () ->
+        begin
+          auto_watch_scheduled := false
+          contents = read_auto_m3u()
+          if
+            contents != auto_m3u_loaded()
+          then
+            auto_m3u_loaded := contents
+            try
+              auto_playlist().reload()
+            catch err do
+              log(label="subwave", "auto.m3u watch reload failed (#{err})")
+            end
+          end
+        end
+    )
+  end
+end
+try
+  if file.exists(auto_m3u) then ignore(file.watch(auto_m3u, auto_m3u_changed)) end
+catch err do
+  log(label="subwave", "auto.m3u is not watched (#{err}); only auto.reload re-reads it")
+end
 
 # MAIN MUSIC SOURCE — queue takes priority, falls back to autonomous.
 music = fallback(
