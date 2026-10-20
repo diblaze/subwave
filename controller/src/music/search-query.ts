@@ -25,7 +25,7 @@
 // `title:/live|remix/`, not `title:(live OR remix)`.
 //
 import { parse, SyntaxError as LiqeSyntaxError, type LiqeQuery, type TagToken } from 'liqe';
-import { foldText, regexPattern } from '../util/search-pattern.js';
+import { foldText, regexPattern, wildcardSource } from '../util/search-pattern.js';
 import { nameKey } from './recency.js';
 import { normGenre } from './genre-fold.js';
 import { ERA_YEAR_SQL } from './library-db/browse.js';
@@ -117,16 +117,14 @@ const NUMERIC = table({ year: ERA_YEAR_SQL, bpm: 'bpm' });
 const ENERGY_LEVELS = new Set(['low', 'medium', 'high']);
 const COMPARE = table({ ':>': '>', ':>=': '>=', ':<': '<', ':<=': '<=', ':=': '=', ':': '=' });
 
-// The genre list (`genre` is only generated from its first entry).
-const GENRES_JSON = `COALESCE(genres,'[]')`;
-const LISTS = table({
-  genre: [GENRES_JSON],
-  mood: [`COALESCE(moods,'[]')`, `COALESCE(audio_moods,'[]')`],
-  tag: [GENRES_JSON, `COALESCE(moods,'[]')`, `COALESCE(audio_moods,'[]')`, `COALESCE(lastfm_tags,'[]')`],
-});
+// The genre list as keysOf reads it (a list, else none); `genre` is only
+// generated from its first entry.
+const GENRES_LIST = `CASE WHEN json_valid(genres) THEN CASE json_type(genres) WHEN 'array' THEN genres END END`;
+// genre, mood and tag each have a stored key list (`<field>_keys`).
+const LIST_FIELDS: readonly string[] = ['genre', 'mood', 'tag'];
 const TEXT_COLUMNS = ['title', 'artist', 'album'] as const;
 const knownField = (name: string) =>
-  (TEXT_COLUMNS as readonly string[]).includes(name) || !!LISTS[name] || !!NUMERIC[name] || name === 'energy';
+  (TEXT_COLUMNS as readonly string[]).includes(name) || LIST_FIELDS.includes(name) || !!NUMERIC[name] || name === 'energy';
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
 // One whole entry in a KEY_SEP-delimited key list.
@@ -186,14 +184,20 @@ function textField(column: string, node: TagToken): CompiledSql {
 
 function listField(field: string, node: TagToken): CompiledSql {
   const op = node.operator.operator;
+  const e = node.expression;
+  if (e.type === 'RegexExpression' && field === 'genre') {
+    // The stored genre keys are folded to ASCII letters and digits, too far for
+    // a regex: walk the genres, each spaced as a name key is.
+    return {
+      sql: `EXISTS (SELECT 1 FROM json_each(${GENRES_LIST}) WHERE type = 'text' AND search_match(?, collapse_space(value)))`,
+      params: [regexSource(e.value, node)],
+    };
+  }
   // A regex, or a wildcard (which on the joined list could run from one tag into
-  // the next), is tested tag by tag, each spaced the way its stored key is.
-  if (node.expression.type === 'RegexExpression' || (field !== 'genre' && hasWildcard(node) && op === ':')) {
-    const test: CompiledSql = node.expression.type === 'RegexExpression'
-      ? { sql: 'search_match(?, collapse_space(value))', params: [regexSource(node.expression.value, node)] }
-      : { sql: `fold(value) LIKE ? ESCAPE '\\'`, params: [containsPattern(node)] };
-    const parts = LISTS[field]!.map((list) => `EXISTS (SELECT 1 FROM json_each(${list}) WHERE ${test.sql})`);
-    return { sql: `(${parts.join(' OR ')})`, params: parts.flatMap(() => test.params) };
+  // the next), is tested tag by tag over the stored keys.
+  if (e.type === 'RegexExpression' || (field !== 'genre' && hasWildcard(node) && op === ':')) {
+    const source = e.type === 'RegexExpression' ? regexSource(e.value, node) : wildcardSource(text(node));
+    return { sql: `search_match_entry(?, ${field}_keys, ?)`, params: [source, KEY_SEP] };
   }
   if (op !== ':' && op !== ':=') throw opError(field, node);
   if (field !== 'genre') {
@@ -236,7 +240,7 @@ function tag(node: TagToken): CompiledSql {
   }
   const name = node.field.name.toLowerCase();
   if ((TEXT_COLUMNS as readonly string[]).includes(name)) return textField(name, node);
-  if (LISTS[name]) return listField(name, node);
+  if (LIST_FIELDS.includes(name)) return listField(name, node);
   if (NUMERIC[name]) return numericField(name, node);
   if (name === 'energy') {
     if (node.operator.operator !== ':' && node.operator.operator !== ':=') throw opError(name, node);

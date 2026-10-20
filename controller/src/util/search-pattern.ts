@@ -48,19 +48,41 @@ export function foldText(text: string): string {
 }
 
 /**
+ * liqe's unanchored wildcard as an RE2 source for `regexPattern`, over folded
+ * text: `*` is one or more characters, `?` exactly one, the rest literal.
+ */
+export function wildcardSource(text: string): string {
+  return foldText(text).split(/(\*+|\?)/)
+    .map(part => part[0] === '*' ? '.+' : part === '?' ? '.' : RE2JS.quote(part))
+    .join('');
+}
+
+/**
  * `search_match(source, value)` for a pattern `regexPattern` already accepted,
- * `fold(value)`, the `foldText` SQLite's ASCII-only LOWER() cannot do, and
- * `collapse_space(value)`, for a regex that should see a name key's spacing.
+ * `search_match_entry(source, list, sep)`, the same over each entry of a
+ * `sep`-delimited key list (true when one matches), and `collapse_space(value)`,
+ * for a regex over a raw value that should see a name key's spacing.
  */
 export function registerSearchSql(db: Database): void {
-  db.function('fold', { deterministic: true }, (value: unknown) => foldText(String(value ?? '')));
   db.function('collapse_space', { deterministic: true }, (value: unknown) => collapseSpace(String(value ?? '')));
-  // One entry, checked on every call: a query repeats one source row after row,
-  // and an interleaved statement with another source just recompiles.
-  let last: SearchPattern | null = null;
-  db.function('search_match', { deterministic: true }, (source: unknown, value: unknown) => {
+  // Compiled once per source: a query repeats its few sources row after row (a
+  // regex and any number of list wildcards). The cap is far above what one
+  // 500-character query can hold, so a full map just starts over between queries.
+  const compiled = new Map<string, SearchPattern>();
+  const pattern = (source: unknown): SearchPattern => {
     const src = String(source);
-    if (last?.source !== src) last = regexPattern(src);
-    return last.test(String(value ?? '')) ? 1 : 0;
+    let p = compiled.get(src);
+    if (!p) {
+      if (compiled.size >= 256) compiled.clear();
+      p = regexPattern(src);
+      compiled.set(src, p);
+    }
+    return p;
+  };
+  db.function('search_match', { deterministic: true }, (source: unknown, value: unknown) =>
+    pattern(source).test(String(value ?? '')) ? 1 : 0);
+  db.function('search_match_entry', { deterministic: true }, (source: unknown, list: unknown, sep: unknown) => {
+    const re = pattern(source);
+    return String(list ?? '').split(String(sep)).some(entry => entry !== '' && re.test(entry)) ? 1 : 0;
   });
 }

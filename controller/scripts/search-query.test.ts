@@ -410,6 +410,8 @@ test('stored lists key as the row reads them, and never throw', () => {
     assert.deepEqual(ids('genre:pop title:shape'), ['osub'], 'the string entries');
     assert.deepEqual(ids('genre:disco'), [], 'not an object entry, which rowToTrack drops too');
     assert.deepEqual(ids('title:shape -genre:pop'), ['nogenre', 'scalar'], 'no genres, or not a list, key as none');
+    assert.deepEqual(ids('title:shape genre:/rock|disco/'), [], 'and a genre regex reads them the same way');
+    assert.deepEqual(ids('title:shape genre:/^synth pop$/'), ['osub']);
     assert.deepEqual(ids('mood:eerie'), ['nogenre'], 'audio moods are moods');
   } finally {
     assert.equal(d.prepare(`SELECT search_fresh FROM tracks WHERE id = 'untagged'`).pluck().get(), 1);
@@ -438,6 +440,18 @@ test('a list wildcard and regex see a tag spaced as its key is', () => {
     assert.deepEqual(ids('tag:/^hip hop$/'), ['spaced'], 'a regex, tag by tag');
   } finally {
     d.prepare(`DELETE FROM tracks WHERE id = 'spaced'`).run();
+  }
+});
+
+test('malformed list JSON neither fails a search nor matches it', () => {
+  const d = db.getDb()!;
+  // Writers JSON.stringify these, so only a hand edit or a foreign writer gets here.
+  d.prepare(`INSERT INTO tracks (id, title, moods, lastfm_tags, audio_moods) VALUES ('broken', 'Broken', '["neutral"]', 'not json', '{"eerie"')`).run();
+  try {
+    for (const q of ['tag:/json/', 'tag:no*', 'mood:/eer/', 'mood:ee*', 'genre:/json/']) assert.deepEqual(ids(q), [], q);
+    assert.deepEqual(ids('title:broken tag:/^neutral$/'), ['broken'], 'its well-formed list still matches');
+  } finally {
+    d.prepare(`DELETE FROM tracks WHERE id = 'broken'`).run();
   }
 });
 
