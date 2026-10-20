@@ -31,12 +31,17 @@ import { normGenre } from './genre-fold.js';
 import { ERA_YEAR_SQL } from './library-db/browse.js';
 import { KEY_SEP } from './library-db/search-keys.js';
 
-// `syntax`: liqe could not parse the text, most often a plain name with a `/`
-// or a quote in it, so the box offers to search it as written. `meaning`: a
-// form we do not run (an unknown field, a value of the wrong kind, a
-// field-scoped group), where the text as written would not find what was meant.
+// `syntax`: text with no query field in it that liqe could not parse, most
+// often a plain name with a `/` or a quote in it, so the box offers to search it
+// as written. `incomplete`: the text stops mid-query (a trailing AND/OR/NOT, an
+// open quote or bracket), most often because it is still being typed, so it
+// gets no such offer. `meaning`: a query we do not run (an unknown field, a
+// value of the wrong kind, a field-scoped group, a second regex, a query with a
+// field that liqe could not parse), where the text as written would not find
+// what was meant either.
+export type QueryErrorKind = 'syntax' | 'incomplete' | 'meaning';
 export class QuerySyntaxError extends Error {
-  constructor(message: string, readonly offset: number, readonly kind: 'syntax' | 'meaning' = 'meaning') {
+  constructor(message: string, readonly offset: number, readonly kind: QueryErrorKind = 'meaning') {
     super(message);
   }
 }
@@ -49,8 +54,9 @@ export interface CompiledSql {
 // SQLite caps an expression tree at 1000 deep; a search box never needs this much.
 export const QUERY_MAX = 500;
 // A field name (as liqe spells one) and its `:` right before the offset liqe
-// stopped at.
+// stopped at, and every one that starts a term.
 const FIELD_BEFORE = /([$A-Z_a-z][\w$.-]*):$/;
+const FIELD_NAMES = /(?:^|[\s(-])([$A-Z_a-z][\w$.-]*):/g;
 // What may sit right before a `/` that opens a regex, or a quote that opens a
 // string: the start, whitespace, `(`, `-` and a comparison's last character
 // (liqe's own set is narrower; this one errs toward counting).
@@ -99,11 +105,14 @@ export function parseQuery(text: string): LiqeQuery {
       if (field && knownField(field.toLowerCase())) {
         throw new QuerySyntaxError(`${field}:( … ) is not supported: write ${field}:a OR ${field}:b, or ${field}:/a|b/`, err.offset, 'meaning');
       }
-      throw new QuerySyntaxError(`"${text[err.offset]}" is not query syntax here`, err.offset, 'syntax');
+      // Text that names a field was meant as a query (`year:[1990 TO *]`):
+      // searching it as written would find nothing.
+      const query = [...text.matchAll(FIELD_NAMES)].some(m => knownField(m[1]!.toLowerCase()));
+      throw new QuerySyntaxError(`"${text[err.offset]}" is not query syntax here`, err.offset, query ? 'meaning' : 'syntax');
     }
     // liqe's "Found no parsings." carries no position: the input ended mid-token.
     if ((err as Error)?.message === 'Found no parsings.') {
-      throw new QuerySyntaxError('The query ends early (an unclosed quote or bracket, or a trailing AND/OR/NOT?)', text.length, 'syntax');
+      throw new QuerySyntaxError('The query ends early (an unclosed quote or bracket, or a trailing AND/OR/NOT?)', text.length, 'incomplete');
     }
     // Anything else liqe throws on a string ("Ambiguous results.", which the
     // count above leaves unreachable) is still about the text, never a 500.

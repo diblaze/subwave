@@ -49,11 +49,16 @@ export type LikeIndex = Record<string, { count: number; operator: boolean }>;
 
 export interface LikedResponse { rows: Track[]; total: number }
 
+// Why search text ran as plain text. `syntax`: no query at all ("AC/DC"), so
+// the box offers to search it as written; `incomplete`: it stops mid-query,
+// most often while still being typed; `meaning`: a query we do not run.
+export interface QueryError { message: string; offset: number; kind: 'syntax' | 'incomplete' | 'meaning' }
+
 export interface BrowseResponse {
   rows: Track[];
   total: number;
   // The search text was not a valid query and ran as plain text.
-  queryError?: { message: string; offset: number; kind: 'syntax' | 'meaning' } | null;
+  queryError?: QueryError | null;
   readsAs?: string;
   // The search text the feedback above belongs to.
   searched?: string;

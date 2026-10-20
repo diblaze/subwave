@@ -215,6 +215,25 @@ test('a syntax error names the character, not a line and column', () => {
   assert.match(compileSearch('title:"unclosed').error!.message, /unclosed quote/);
 });
 
+test('only text that is no query at all gets the "search as written" offer', () => {
+  assert.equal(compileSearch('AC/DC').error!.kind, 'syntax');
+  assert.equal(compileSearch("Guns N' Roses").error!.kind, 'syntax');
+  assert.equal(compileSearch('year:[1990 TO *]').error!.kind, 'meaning', 'it names a field: a query with a mistake in it');
+  assert.equal(compileSearch('Re:(mix) title:x').error!.kind, 'meaning');
+  assert.equal(compileSearch('title:live OR').error!.kind, 'incomplete', 'most often still being typed');
+  assert.equal(compileSearch('"live at').error!.kind, 'incomplete');
+  assert.equal(compileSearch('12" mixes').error!.kind, 'syntax', 'a quote inside a word opens nothing: not a query');
+  assert.equal(compileSearch('-title:(live OR remix)').error!.kind, 'meaning', 'a negated field-scoped group names its field');
+  // The box's examples (BrowseFilters QUERY_EXAMPLES), typed a key at a time.
+  const examples = ['title:/^love/', 'artist:="ABBA"', '-genre:pop year:[1990 TO 1999]', 'title:/\\(live\\)$/',
+    'title:/\\blove\\b/', 'title:live OR title:remix', 'bpm:>140', 'mood:calm tag:christmas', 'live'];
+  for (const ex of examples) {
+    for (let i = 1; i <= ex.length; i++) {
+      assert.notEqual(compileSearch(ex.slice(0, i)).error?.kind, 'syntax', ex.slice(0, i));
+    }
+  }
+});
+
 test('a non-parser failure is not dressed up as a syntax error', () => {
   assert.throws(() => parseQuery(123 as never), (e) => !(e instanceof QuerySyntaxError));
   assert.throws(() => compileSearch(undefined as never), (e) => !(e instanceof QuerySyntaxError));

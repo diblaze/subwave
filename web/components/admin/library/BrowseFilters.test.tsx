@@ -25,6 +25,15 @@ test('the search box is described by the live region that reads its query back',
   assert.match(html, /is not query syntax here/, 'which carries the error');
 });
 
+test('only text that is no query at all is offered as a quoted search', () => {
+  assert.match(render(), /To search for this text as written/, 'AC/DC');
+  for (const kind of ['incomplete', 'meaning'] as const) {
+    const html = render({ q: 'title:live OR', queryError: { message: 'The query ends early', offset: 13, kind } });
+    assert.match(html, /The query ends early/);
+    assert.doesNotMatch(html, /To search for this text as written/, kind);
+  }
+});
+
 test('a search answered while the keys are rebuilt says it may be missing tracks', () => {
   const note = /may be missing tracks/;
   assert.match(render({ q: 'live', queryError: null, readsAs: 'anywhere "live"', reindexing: true }), note);

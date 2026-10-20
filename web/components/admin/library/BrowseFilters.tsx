@@ -9,7 +9,7 @@ import { Field, FieldLabel } from '../../ui/field';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../ui/select';
 import { cn } from '../../../lib/cn';
  
-import type { Energy, Sort, Vocal } from './types';
+import type { Energy, QueryError, Sort, Vocal } from './types';
 import { EnergyMeter } from './bits';
 
 // The search box's examples, phrased as what a person wants. Clicking one puts
@@ -38,7 +38,7 @@ interface BrowseFiltersProps {
   yearFrom: string; setYearFrom: (s: string) => void;
   yearTo: string; setYearTo: (s: string) => void;
   q: string; setQ: (s: string) => void;
-  queryError: { message: string; offset: number; kind: 'syntax' | 'meaning' } | null;
+  queryError: QueryError | null;
   readsAs: string;
   reindexing: boolean;
   sort: Sort; setSort: (s: Sort) => void;
@@ -53,7 +53,7 @@ interface BrowseFiltersProps {
 function QueryFeedback({ id, q, queryError, readsAs, reindexing, setQ }: {
   id: string;
   q: string;
-  queryError: { message: string; offset: number; kind: 'syntax' | 'meaning' } | null;
+  queryError: QueryError | null;
   readsAs: string;
   reindexing: boolean;
   setQ: (s: string) => void;
