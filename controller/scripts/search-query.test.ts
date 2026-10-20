@@ -6,12 +6,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import Database from 'better-sqlite3';
 
 const stateDir = mkdtempSync(join(tmpdir(), 'subwave-search-query-'));
 process.env.STATE_DIR = stateDir;
 
 const db = await import('../src/music/library-db.js');
 const { compileSearch, compileSql, describeQuery, parseQuery, QuerySyntaxError } = await import('../src/music/search-query.js');
+const { refreshSearchKeys } = await import('../src/music/library-db/search-keys.js');
 await db.open({ embeddingDim: 4 });
 
 type Row = { id: string; title: string; artist: string; album: string; genres: string[]; year: number; moods?: string[]; energy?: 'low' | 'medium' | 'high'; bpm?: number };
@@ -239,6 +241,42 @@ test('an open puts back the trigger and index a table rebuild dropped', async ()
   assert.deepEqual(names, ['tracks_search_stale', 'tracks_search_stale_idx']);
   assert.deepEqual(ids('title:highway'), ['acdc'], 'the unmarked edit is re-keyed');
   db.getDb()!.prepare(`UPDATE tracks SET title = 'Thunderstruck' WHERE id = 'acdc'`).run();
+});
+
+test('a search re-keys one chunk and leaves the rest to the background', async () => {
+  const d = db.getDb()!;
+  d.prepare('UPDATE tracks SET search_fresh = NULL').run();
+  const total = staleCount();
+  refreshSearchKeys({ rows: 2 });
+  assert.equal(staleCount(), total - 2, 'only the budget, before the search answers');
+  for (let i = 0; i < 5 && staleCount(); i++) await new Promise((r) => setImmediate(r));
+  assert.equal(staleCount(), 0, 'the drain finishes the rest');
+});
+
+test('a held write lock neither stalls a search nor fails it', () => {
+  const d = db.getDb()!;
+  d.prepare('UPDATE tracks SET search_fresh = NULL').run();
+  // As the tagger, mid-write, from its own process.
+  const other = new Database(join(stateDir, 'library.db'));
+  const warnings: string[] = [];
+  const warn = console.warn;
+  console.warn = (msg: string) => { warnings.push(msg); };
+  try {
+    other.exec('BEGIN IMMEDIATE');
+    const started = performance.now();
+    assert.deepEqual(ids('title:thunder'), ['acdc'], 'answers from the keys it has');
+    ids('title:thunder');
+    assert.ok(performance.now() - started < 2000, 'well short of the 5 s busy timeout');
+    assert.equal(warnings.length, 1, 'one warning for a run of failures');
+    assert.match(warnings[0]!, /search keys not refreshed/);
+    other.exec('COMMIT');
+    ids('title:thunder');
+    assert.equal(staleCount(), 0, 'the next search catches up');
+  } finally {
+    console.warn = warn;
+    if (other.inTransaction) other.exec('ROLLBACK');
+    other.close();
+  }
 });
 
 test('genres in every stored shape key like show-filter reads them', () => {

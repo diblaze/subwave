@@ -2,7 +2,7 @@
 
 import Database from 'better-sqlite3';
 import { AUDIO_EMBEDDING_DIM, requireDb } from './handle.js';
-import { SEARCH_KEY_DDL, ensureSearchKeys, refreshSearchKeys } from './search-keys.js';
+import { SEARCH_KEY_DDL, ensureSearchKeys, fillSearchKeys } from './search-keys.js';
 import { ensureFacetStatus } from './facets.js';
 import { ensureGenreInputs, touchGenreInputs } from './genre-inputs.js';
 
@@ -482,7 +482,7 @@ export async function migrate(embeddingDim: number, reseed = false, adoptStoredD
   // any of them while it exists: a migration above that drops one must DROP
   // TRIGGER tracks_search_stale first. Filled once on the upgrade to 29, so the
   // first search after it does not pay for the whole library.
-  if (ensureSearchKeys(d) && userVersion < 29) refreshSearchKeys();
+  if (ensureSearchKeys(d) && userVersion < 29) fillSearchKeys();
 
   // Reconcile the requested embedding dim against what physically exists. The
   // vec0 table's FLOAT[N] schema is the authority for what inserts accept, not

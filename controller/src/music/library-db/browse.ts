@@ -56,6 +56,7 @@ export function filter(opts: FilterOpts = {}): { total: number; rows: TrackRecor
   }
   if (opts.query) {
     // The compiled query reads the stored search keys; bring them up to date.
+    // Bounded and never throws: a bulk re-key finishes in the background.
     refreshSearchKeys();
     where.push(`(${opts.query.sql})`);
     params.push(...opts.query.params);

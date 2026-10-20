@@ -22,10 +22,18 @@
 // names, and keys built from one column fewer need a new definition here anyway.
 // The keys also depend on code (nameKey, artistParticipantKeys, genreRuns,
 // normGenre): a change there needs a migration that clears `search_fresh`.
+//
+// Nothing here may fail an open or a search. A failed ensure or refresh warns,
+// and the search answers from the keys it has, wrong only for the rows still
+// waiting. A search re-keys at most one chunk before it answers and leaves the
+// rest to a background drain, one short write transaction per chunk, so a bulk
+// change (a first mood-tagging pass, a scene merge) neither stalls the request
+// nor holds the write lock against the tagger.
 
 import type Database from 'better-sqlite3';
-import { getDbNonce, requireDb } from './handle.js';
+import { getDb, requireDb } from './handle.js';
 import { safeParseArray } from './rows.js';
+import { changeToken } from './stats.js';
 import { artistNameKey, artistParticipantKeys, nameKey } from '../recency.js';
 import { genreRuns, normGenre } from '../genre-fold.js';
 
@@ -101,6 +109,13 @@ const keyList = (keys: Iterable<string>): string => {
   return set.size ? `${KEY_SEP}${[...set].join(KEY_SEP)}${KEY_SEP}` : '';
 };
 
+interface SourceRow {
+  id: string;
+  title: string | null; artist: string | null; album: string | null;
+  genres: string | null;
+  moods: string | null; audio_moods: string | null; lastfm_tags: string | null;
+}
+
 // As show-filter's trackGenres reads them: the `genres` array, strings or
 // OpenSubsonic `{ name }` objects. Always valid JSON: the generated `genre`
 // column's index makes SQLite refuse anything else on write.
@@ -111,54 +126,126 @@ function genreList(genresJson: string | null): string[] {
     .filter(Boolean);
 }
 
-interface SourceRow {
-  id: string;
-  title: string | null; artist: string | null; album: string | null;
-  genres: string | null;
-  moods: string | null; audio_moods: string | null; lastfm_tags: string | null;
+// The key columns in SEARCH_KEY_COLUMNS order.
+function keysOf(r: SourceRow): string[] {
+  const genres = genreList(r.genres);
+  const moods = [...safeParseArray(r.moods ?? '[]'), ...safeParseArray(r.audio_moods ?? '[]')];
+  const lastfm = safeParseArray(r.lastfm_tags ?? '[]');
+  const artist = r.artist ?? '';
+  return [
+    nameKey(r.title), nameKey(artist), nameKey(r.album),
+    keyList(artist ? [artistNameKey(artist), ...artistParticipantKeys(artist)] : []),
+    keyList(genres.map(normGenre)),
+    keyList(genres.flatMap(genreRuns)),
+    keyList([...genres, ...moods, ...lastfm].map(nameKey)),
+    keyList(moods.map(nameKey)),
+  ];
 }
 
-let refreshedAt: string | null = null;
+// Rows re-keyed per write transaction, and by a search before it answers: about
+// 12 ms of work, measured over 50k synthetic tracks on a desktop SSD.
+const CHUNK_ROWS = 1000;
+// How long a re-key waits for another process's write lock before leaving the
+// rows for a later search. The connection's own busy timeout (5 s) would stall
+// the request, and the event loop with it.
+const LOCK_WAIT_MS = 100;
 
-const changeMark = (): string => {
-  const d = requireDb();
-  const changes = (d.prepare('SELECT total_changes() AS n').get() as { n: number }).n;
-  return `${getDbNonce()}:${d.pragma('data_version', { simple: true })}:${changes}`;
-};
+// The changeToken() at which no row was stale.
+let freshAt: string | null = null;
+let draining = false;
+// One warning per run of failures: a search box fires on every pause in typing.
+let warned = false;
 
-/** Bring every row's search keys up to date with its source fields. */
-export function refreshSearchKeys(): void {
-  if (changeMark() === refreshedAt) return;
-  const d = requireDb();
-  // Outside a write lock first: most refreshes find nothing to do, and waiting
-  // for the lock while a tagger walk holds it would stall the event loop.
-  if (!d.prepare('SELECT 1 FROM tracks WHERE search_fresh IS NULL LIMIT 1').get()) {
-    refreshedAt = changeMark();
-    return;
-  }
-  const select = d.prepare(`SELECT id, ${SOURCE_COLUMNS.join(', ')} FROM tracks WHERE search_fresh IS NULL`);
+// Re-keys up to `limit` stale rows in one write transaction; returns how many.
+// Read and written under one write lock (IMMEDIATE): the tagger and analyzer are
+// other processes, and a row they change between a separate SELECT and this
+// write would be marked fresh with keys built from its old values.
+function rekeyChunk(d: Database.Database, limit: number): number {
+  const select = d.prepare(`SELECT id, ${SOURCE_COLUMNS.join(', ')} FROM tracks WHERE search_fresh IS NULL LIMIT ?`);
   const update = d.prepare(
     `UPDATE tracks SET ${SEARCH_KEY_COLUMNS.map(c => `${c} = ?`).join(', ')}, search_fresh = 1 WHERE id = ?`,
   );
-  // Read and write under one write lock (IMMEDIATE): the tagger and analyzer are
-  // other processes, and a row they change between a separate SELECT and this
-  // write would be marked fresh with keys built from its old values.
-  d.transaction(() => {
-    for (const r of select.all() as SourceRow[]) {
-      const genres = genreList(r.genres);
-      const moods = [...safeParseArray(r.moods ?? '[]'), ...safeParseArray(r.audio_moods ?? '[]')];
-      const lastfm = safeParseArray(r.lastfm_tags ?? '[]');
-      const artist = r.artist ?? '';
-      update.run(
-        nameKey(r.title), nameKey(artist), nameKey(r.album),
-        keyList(artist ? [artistNameKey(artist), ...artistParticipantKeys(artist)] : []),
-        keyList(genres.map(normGenre)),
-        keyList(genres.flatMap(genreRuns)),
-        keyList([...genres, ...moods, ...lastfm].map(nameKey)),
-        keyList(moods.map(nameKey)),
-        r.id,
-      );
+  const busyTimeout = d.pragma('busy_timeout', { simple: true }) as number;
+  d.pragma(`busy_timeout = ${LOCK_WAIT_MS}`);
+  try {
+    const n = d.transaction(() => {
+      const rows = select.all(limit) as SourceRow[];
+      for (const r of rows) update.run(...keysOf(r), r.id);
+      return rows.length;
+    }).immediate();
+    warned = false;
+    return n;
+  } finally {
+    d.pragma(`busy_timeout = ${busyTimeout}`);
+  }
+}
+
+function warn(err: unknown): void {
+  if (warned) return;
+  warned = true;
+  console.warn(
+    `[library-db] search keys not refreshed (${(err as Error)?.message}); ` +
+      'searches may miss recent edits until a later search retries',
+  );
+}
+
+// The rest of a bulk re-key, one chunk per turn of the event loop. A closed
+// database, or a chunk that fails, ends it; the next search starts another.
+function drainSoon(): void {
+  if (draining) return;
+  draining = true;
+  const step = () => {
+    try {
+      const d = getDb();
+      if (d && rekeyChunk(d, CHUNK_ROWS) === CHUNK_ROWS) {
+        setImmediate(step);
+        return;
+      }
+    } catch (err) {
+      warn(err);
     }
-  }).immediate();
-  refreshedAt = changeMark();
+    draining = false;
+  };
+  setImmediate(step);
+}
+
+/**
+ * Bring the search keys up to date before a query search: up to `rows` stale
+ * rows now (one chunk by default), the rest in the background. Never throws;
+ * returns false when a re-key failed (and warned).
+ */
+export function refreshSearchKeys({ rows = CHUNK_ROWS }: { rows?: number } = {}): boolean {
+  try {
+    const d = requireDb();
+    // Before the check: a write that lands after it moves the token, so the
+    // next search looks again rather than trusting this one's answer.
+    const mark = changeToken();
+    if (mark === freshAt) return true;
+    // Outside a write lock first: most refreshes find nothing to do, and waiting
+    // for the lock while a tagger walk holds it would stall the event loop.
+    if (!d.prepare('SELECT 1 FROM tracks WHERE search_fresh IS NULL LIMIT 1').get()) {
+      freshAt = mark;
+      return true;
+    }
+    for (let done = 0; done < rows;) {
+      const limit = Math.min(CHUNK_ROWS, rows - done);
+      const n = rekeyChunk(d, limit);
+      if (n < limit) return true;
+      done += n;
+    }
+    drainSoon();
+    return true;
+  } catch (err) {
+    warn(err);
+    return false;
+  }
+}
+
+/** Migration 29's one-time fill, logged with its time. Never throws. */
+export function fillSearchKeys(): void {
+  const started = performance.now();
+  console.log('[library-db] building search keys (one-time)…');
+  if (refreshSearchKeys({ rows: Infinity })) {
+    console.log(`[library-db] search keys built in ${Math.round(performance.now() - started)}ms`);
+  }
 }
