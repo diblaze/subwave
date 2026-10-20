@@ -61,6 +61,38 @@ test('regex nodes run as RE2', () => {
   assert.deepEqual(ids('artist:/^the /'), ['liver']);
 });
 
+test('a query takes one regex: a second is refused before liqe reads it', () => {
+  for (const q of ['title:/live/ OR title:/remix/', '-title:/live/ -title:/remix/']) {
+    const { error, readsAs } = compileSearch(q);
+    assert.equal(error?.kind, 'meaning', q);
+    assert.match(error!.message, /one \/regex\/.* title:\/a\|b\//, q);
+    assert.equal(error!.offset, q.indexOf('/remix/'), 'at the second one');
+    assert.equal(readsAs, '');
+  }
+  // liqe's readings double with every regex: 22 in 87 characters ran out of memory.
+  const many = Array(22).fill('/a/').join(' ');
+  const started = performance.now();
+  assert.equal(compileSearch(many).error?.offset, 4);
+  assert.ok(performance.now() - started < 100, 'refused in one pass');
+  assert.match(compileSearch(many).error!.message, / as \/a\|b\/$/, 'no field to name');
+  assert.deepEqual(search('title:/live|remix/'), { ids: ['live', 'liver', 'remix'], error: null }, 'the alternatives in one');
+  // A quote hides a slash only until a regex opens: after one, in some reading
+  // the quote sits inside it, and the readings multiply there just the same.
+  assert.equal(compileSearch('title:/a/ "x /b/ /c/"').error?.kind, 'meaning');
+  assert.deepEqual(search('"/b/ /c/" title:/song/'), { ids: [], error: null }, 'a phrase before the regex is only a phrase');
+  assert.equal(compileSearch('"say \\"hi /x/" title:/live/').error, null, 'and an escaped quote does not end it');
+  assert.equal(compileSearch('title:/a\\/b/ live').error, null, 'an escaped slash closes nothing');
+  assert.equal(compileSearch('AC/DC/ACDC').error?.kind, 'syntax', 'nor does a slash inside a word open one');
+});
+
+test('anything else liqe throws on a string is a query error, never a 500', (t) => {
+  // liqe trims the text first: make that one call fail as a parser bug would.
+  t.mock.method(String.prototype, 'trim', () => { throw new RangeError('a parser bug'); }, { times: 1 });
+  const { error, query } = compileSearch('title:live');
+  assert.deepEqual({ message: error?.message, offset: error?.offset, kind: error?.kind }, { message: 'This query could not be read', offset: 0, kind: 'meaning' });
+  assert.deepEqual(db.filter({ query, limit: 50 }).rows.map((r) => r.id).sort(), [], 'searched as plain text');
+});
+
 test(':= is an exact name; on artist it also matches a credited act', () => {
   assert.deepEqual(ids('artist:="abba"'), ['abba']);
   assert.deepEqual(ids('artist:="The Guest"'), ['trap']);

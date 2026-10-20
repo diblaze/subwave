@@ -8,7 +8,7 @@
 //   title:live                that field contains it; `*` = one or more chars,
 //   artist:the*b              `?` = one char, unanchored (liqe's wildcard rule)
 //   artist:="ABBA"            exact name (folded like the blocklist's name keys)
-//   title:/\((live|remix)\)/  RE2 regex, case-insensitive, unanchored
+//   title:/\((live|remix)\)/  RE2 regex, case-insensitive, unanchored; one per query
 //   genre:punk                genre or a refinement of it ("Punk Rock", not "Trap");
 //                             no wildcards in a genre (use /regex/)
 //   tag:christmas mood:calm   tag = genres + moods + audio moods + Last.fm tags;
@@ -47,11 +47,47 @@ export interface CompiledSql {
 
 // SQLite caps an expression tree at 1000 deep; a search box never needs this much.
 export const QUERY_MAX = 500;
-// A field name and its `:` right before the offset liqe stopped at.
-const FIELD_BEFORE = /([^\s():"]+):$/;
+// A field name (as liqe spells one) and its `:` right before the offset liqe
+// stopped at.
+const FIELD_BEFORE = /([$A-Z_a-z][\w$.-]*):$/;
+// What may sit right before a `/` that opens a regex, or a quote that opens a
+// string: the start, whitespace, `(`, `-` and a comparison's last character
+// (liqe's own set is narrower; this one errs toward counting).
+const TERM_START = /[\s(\-:=<>]/;
+
+// liqe lets a regex body hold any character, `/` included, so once a regex has
+// opened, every later `/` that could open one could also sit inside the first.
+// Two regexes are then several readings: liqe builds every one (they double
+// with each regex, so 22 `/a/` in 87 characters ran the controller out of
+// memory) and throws "Ambiguous results." So a query takes one regex, counted
+// here in one pass before liqe sees the text. Returns the second opener's offset,
+// or -1. A quoted string hides its `/` only while no regex is open: after one,
+// in some reading that quote is inside the regex, and the readings multiply in
+// the string just the same.
+function secondRegexAt(text: string): number {
+  let open = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (i > 0 && !TERM_START.test(text[i - 1]!)) continue;
+    if (c === '/') {
+      if (++open === 2) return i;
+      // To the first `/` that could close it, past `\` escapes, as liqe reads one.
+      for (i++; i < text.length && text[i] !== '/'; i++) if (text[i] === '\\') i++;
+    } else if ((c === '"' || c === "'") && open === 0) {
+      for (i++; i < text.length && text[i] !== c; i++) if (text[i] === '\\') i++;
+    }
+  }
+  return -1;
+}
 
 export function parseQuery(text: string): LiqeQuery {
+  if (typeof text !== 'string') throw new TypeError('parseQuery takes a string');
   if (text.length > QUERY_MAX) throw new QuerySyntaxError(`A query is at most ${QUERY_MAX} characters`, QUERY_MAX, 'meaning');
+  const second = secondRegexAt(text);
+  if (second !== -1) {
+    const field = FIELD_BEFORE.exec(text.slice(0, text.indexOf('/')))?.[1] ?? '';
+    throw new QuerySyntaxError(`A query takes one /regex/: put the alternatives in one, as ${field && `${field}:`}/a|b/`, second, 'meaning');
+  }
   try {
     return parse(text);
   } catch (err) {
@@ -68,7 +104,9 @@ export function parseQuery(text: string): LiqeQuery {
     if ((err as Error)?.message === 'Found no parsings.') {
       throw new QuerySyntaxError('The query ends early (an unclosed quote or bracket, or a trailing AND/OR/NOT?)', text.length, 'syntax');
     }
-    throw err;
+    // Anything else liqe throws on a string ("Ambiguous results.", which the
+    // count above leaves unreachable) is still about the text, never a 500.
+    throw new QuerySyntaxError('This query could not be read', 0, 'meaning');
   }
 }
 
