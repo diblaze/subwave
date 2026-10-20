@@ -27,21 +27,29 @@ export function regexPattern(source: string): SearchPattern {
   return { source, test: (text) => re.test(text.normalize('NFC')) };
 }
 
+/** A run of whitespace as one space, as recency.nameKey keys it. */
+export function collapseSpace(text: string): string {
+  return text.replace(/\s+/g, ' ');
+}
+
 /**
  * Unicode case fold for plain-text search: NFC (a decomposed Å is one Å), lower
- * case, and one apostrophe — the same apostrophe set recency.nameKey folds, so
- * a search and a name key agree on "Don’t".
+ * case, one apostrophe and one space — recency.nameKey's fold less its trim (a
+ * search may mean the space at its edge), so a search and a name key agree on
+ * "Don’t" and on "Hip  Hop".
  */
 export function foldText(text: string): string {
-  return text.normalize('NFC').toLowerCase().replace(/[‘’ʼ´`]/g, "'");
+  return collapseSpace(text.normalize('NFC').toLowerCase().replace(/[‘’ʼ´`]/g, "'"));
 }
 
 /**
  * `search_match(source, value)` for a pattern `regexPattern` already accepted,
- * and `fold(value)`, the `foldText` SQLite's ASCII-only LOWER() cannot do.
+ * `fold(value)`, the `foldText` SQLite's ASCII-only LOWER() cannot do, and
+ * `collapse_space(value)`, for a regex that should see a name key's spacing.
  */
 export function registerSearchSql(db: Database): void {
   db.function('fold', { deterministic: true }, (value: unknown) => foldText(String(value ?? '')));
+  db.function('collapse_space', { deterministic: true }, (value: unknown) => collapseSpace(String(value ?? '')));
   // One entry, checked on every call: a query repeats one source row after row,
   // and an interleaved statement with another source just recompiles.
   let last: SearchPattern | null = null;

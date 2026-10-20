@@ -79,9 +79,6 @@ const LISTS = table({
 const TEXT_COLUMNS = ['title', 'artist', 'album'] as const;
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
-// A query value folded the way the stored keys are (recency.nameKey), without
-// trimming: a search may mean the space at its edge.
-const queryFold = (s: string) => foldText(s).replace(/\s+/g, ' ');
 // One whole entry in a KEY_SEP-delimited key list.
 const entry = (key: string) => `%${KEY_SEP}${escapeLike(key)}${KEY_SEP}%`;
 const hasWildcard = (node: TagToken) =>
@@ -100,7 +97,7 @@ function start(node: TagToken): number {
 // `:` on text: unanchored substring; an unquoted `*`/`?` is liqe's wildcard.
 function containsPattern(node: TagToken): string {
   const e = node.expression;
-  const value = escapeLike(queryFold(text(node)));
+  const value = escapeLike(foldText(text(node)));
   const body = e.type === 'LiteralExpression' && !e.quoted ? value.replace(/\*+/g, '_%').replace(/\?/g, '_') : value;
   return `%${body}%`;
 }
@@ -138,10 +135,10 @@ function textField(column: string, node: TagToken): CompiledSql {
 function listField(field: string, node: TagToken): CompiledSql {
   const op = node.operator.operator;
   // A regex, or a wildcard (which on the joined list could run from one tag into
-  // the next), is tested tag by tag.
+  // the next), is tested tag by tag, each spaced the way its stored key is.
   if (node.expression.type === 'RegexExpression' || (field !== 'genre' && hasWildcard(node) && op === ':')) {
     const test: CompiledSql = node.expression.type === 'RegexExpression'
-      ? { sql: 'search_match(?, value)', params: [regexSource(node.expression.value, node)] }
+      ? { sql: 'search_match(?, collapse_space(value))', params: [regexSource(node.expression.value, node)] }
       : { sql: `fold(value) LIKE ? ESCAPE '\\'`, params: [containsPattern(node)] };
     const parts = LISTS[field]!.map((list) => `EXISTS (SELECT 1 FROM json_each(${list}) WHERE ${test.sql})`);
     return { sql: `(${parts.join(' OR ')})`, params: parts.flatMap(() => test.params) };
@@ -297,7 +294,7 @@ export function compileSearch(text: string): { query: CompiledSql; error: QueryS
     return { query: compileSql(ast), error: null, readsAs: describeQuery(ast) };
   } catch (err) {
     if (!(err instanceof QuerySyntaxError)) throw err;
-    const pattern = `%${escapeLike(queryFold(text.trim()))}%`;
+    const pattern = `%${escapeLike(foldText(text.trim()))}%`;
     const query = {
       sql: TEXT_COLUMNS.map((c) => `${c}_key LIKE ? ESCAPE '\\'`).join(' OR '),
       params: TEXT_COLUMNS.map(() => pattern),

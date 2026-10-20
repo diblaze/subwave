@@ -23,12 +23,14 @@ test('RE2 refuses what it cannot run in linear time, and an empty pattern', () =
   assert.ok(performance.now() - started < 200, 'catastrophic pattern runs in linear time');
 });
 
-test('foldText: NFC, Unicode lower case, one apostrophe', () => {
+test('foldText: NFC, Unicode lower case, one apostrophe, one space', () => {
   assert.equal(foldText('ÅSA'), 'åsa');
   assert.equal(foldText('Värld'), 'värld');
   for (const curly of ['‘', '’', 'ʼ', '´', '`']) {
     assert.equal(foldText(`Don${curly}t`), "don't", `${curly} folds as recency.nameKey folds it`);
   }
+  assert.equal(foldText('Hip \t Hop'), 'hip hop', 'a run of whitespace is one space, as in a name key');
+  assert.equal(foldText(' edge '), ' edge ', 'but not trimmed: a search may mean the space at its edge');
 });
 
 test('SQL twins: fold() and search_match()', () => {
@@ -39,6 +41,8 @@ test('SQL twins: fold() and search_match()', () => {
   assert.equal(one(`SELECT search_match(?, 'Song (Live)') AS v`, '\\(live\\)'), 1);
   assert.equal(one(`SELECT search_match(?, 'Song') AS v`, '\\(live\\)'), 0);
   assert.equal(one(`SELECT fold(NULL) AS v`), '', 'a NULL column folds to empty');
+  assert.equal(one(`SELECT collapse_space('Hip  Hop') AS v`), 'Hip Hop', 'spacing only, case kept');
+  assert.equal(one(`SELECT collapse_space(NULL) AS v`), '');
   assert.equal(one(`SELECT search_match(?, NULL) AS v`, 'x'), 0);
   db.close();
 });

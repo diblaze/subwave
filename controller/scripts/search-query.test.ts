@@ -311,6 +311,18 @@ test('a list wildcard does not run from one tag into the next', () => {
   assert.deepEqual(ids('tag:har*rock'), ['acdc', 'gnr']);
 });
 
+test('a list wildcard and regex see a tag spaced as its key is', () => {
+  const d = db.getDb()!;
+  d.prepare(`INSERT INTO tracks (id, title, moods, lastfm_tags) VALUES ('spaced', 'Spaced', '["neutral"]', '["Hip  Hop"]')`).run();
+  try {
+    assert.deepEqual(ids('tag:"hip hop"'), ['spaced'], 'the stored key');
+    assert.deepEqual(ids('tag:hip?hop'), ['spaced'], 'a wildcard, tag by tag');
+    assert.deepEqual(ids('tag:/^hip hop$/'), ['spaced'], 'a regex, tag by tag');
+  } finally {
+    d.prepare(`DELETE FROM tracks WHERE id = 'spaced'`).run();
+  }
+});
+
 test.after(() => {
   db.close();
   rmSync(stateDir, { recursive: true, force: true });
