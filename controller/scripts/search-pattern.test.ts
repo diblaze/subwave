@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import Database from 'better-sqlite3';
 import { foldText, regexPattern, registerSearchSql, wildcardSource } from '../src/util/search-pattern.js';
+import { nameKey } from '../src/music/recency.js';
 
 test('a regex is case-insensitive, unanchored RE2', () => {
   const p = regexPattern('\\((live|remix)\\)');
@@ -33,6 +34,12 @@ test('foldText: NFC, Unicode lower case, one apostrophe, one space', () => {
   }
   assert.equal(foldText('Hip \t Hop'), 'hip hop', 'a run of whitespace is one space, as in a name key');
   assert.equal(foldText(' edge '), ' edge ', 'but not trimmed: a search may mean the space at its edge');
+});
+
+test('foldText is recency.nameKey less its trim, so a search and a stored key agree', () => {
+  for (const s of ['ÅSA', 'A\u030Asa', 'Don’t', 'Guns N` Roses', 'Hip \t\n Hop', '  Edge  ', 'ʼ´‘’', '', 'İstanbul', 'ΣΊΣΥΦΟΣ']) {
+    assert.equal(foldText(s).trim(), nameKey(s), JSON.stringify(s));
+  }
 });
 
 test('wildcardSource: `*` is one or more characters, `?` one, the rest literal', () => {

@@ -6,6 +6,7 @@ import { Search } from 'lucide-react';
 import { Input } from '../../ui/input';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '../../ui/input-group';
 import { Field, FieldLabel } from '../../ui/field';
+import { fieldAria } from '../../../lib/form';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../ui/select';
 import { cn } from '../../../lib/cn';
  
@@ -49,9 +50,9 @@ interface BrowseFiltersProps {
 // missing tracks while the keys are rebuilt, or, for an empty box, three
 // examples to start from. The live region stays mounted so a screen reader
 // announces each new reading or error, and the box names it as its description
-// (`id`), so tabbing back to the box reads it again.
-function QueryFeedback({ id, q, queryError, readsAs, reindexing, setQ }: {
-  id: string;
+// (`descriptionProps`), so tabbing back to the box reads it again.
+function QueryFeedback({ descriptionProps, q, queryError, readsAs, reindexing, setQ }: {
+  descriptionProps: { id: string };
   q: string;
   queryError: QueryError | null;
   readsAs: string;
@@ -63,7 +64,7 @@ function QueryFeedback({ id, q, queryError, readsAs, reindexing, setQ }: {
   const quoted = `"${text.replace(/[\\"]/g, '\\$&')}"`;
   return (
     <>
-      <div id={id} className="field-hint mt-1.5" aria-live="polite">
+      <div {...descriptionProps} className="field-hint mt-1.5" aria-live="polite">
         {queryError && text ? (
           <>
             <pre className="m-0 overflow-x-auto font-mono text-ink">{text}{'\n'}{' '.repeat(Math.min(queryError.offset, text.length))}^</pre>
@@ -99,7 +100,8 @@ export function BrowseFilters(p: BrowseFiltersProps) {
   const [showAllMoods, setShowAllMoods] = useState(false);
   const [showExamples, setShowExamples] = useState(false);
   const examplesId = useId();
-  const feedbackId = useId();
+  // The box is described by its feedback, which is always mounted.
+  const searchAria = fieldAria(useId(), undefined, { hasDescription: true });
   const ranked = useMemo(
     () => [...p.moodVocab].sort((a, b) => (p.moodCounts[b] || 0) - (p.moodCounts[a] || 0)),
     [p.moodVocab, p.moodCounts],
@@ -130,7 +132,7 @@ export function BrowseFilters(p: BrowseFiltersProps) {
           <InputGroupAddon><Search /></InputGroupAddon>
           <InputGroupInput
             aria-label="Search tracks"
-            aria-describedby={feedbackId}
+            {...searchAria.controlProps}
             placeholder="search tracks, or write a query — ? for examples"
             value={p.q}
             onChange={(e: ChangeEvent<HTMLInputElement>) => p.setQ(e.target.value)}
@@ -148,7 +150,7 @@ export function BrowseFilters(p: BrowseFiltersProps) {
             </InputGroupButton>
           </InputGroupAddon>
         </InputGroup>
-        <QueryFeedback id={feedbackId} q={p.q} queryError={p.queryError} readsAs={p.readsAs} reindexing={p.reindexing} setQ={p.setQ} />
+        <QueryFeedback descriptionProps={searchAria.descriptionProps} q={p.q} queryError={p.queryError} readsAs={p.readsAs} reindexing={p.reindexing} setQ={p.setQ} />
         {/* Hidden, not unmounted: aria-controls must point at an element. */}
         <div id={examplesId} hidden={!showExamples} className="mt-3 border-t border-dashed border-separator-strong pt-3">
           <div className="caption mb-2">write what you want</div>

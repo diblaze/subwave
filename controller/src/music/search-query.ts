@@ -26,6 +26,7 @@
 //
 import { parse, SyntaxError as LiqeSyntaxError, type LiqeQuery, type TagToken } from 'liqe';
 import { foldText, regexPattern, wildcardSource } from '../util/search-pattern.js';
+import { MANUAL_TAG_ENERGIES } from '../schemas/library.js';
 import { nameKey } from './recency.js';
 import { normGenre } from './genre-fold.js';
 import { ERA_YEAR_SQL } from './library-db/browse.js';
@@ -123,7 +124,7 @@ export function parseQuery(text: string): LiqeQuery {
 // Null-prototype: a field name is user input, and `constructor:x` must miss.
 const table = <T>(o: Record<string, T>): Record<string, T> => Object.assign(Object.create(null), o);
 const NUMERIC = table({ year: ERA_YEAR_SQL, bpm: 'bpm' });
-const ENERGY_LEVELS = new Set(['low', 'medium', 'high']);
+const ENERGY_LEVELS: readonly string[] = MANUAL_TAG_ENERGIES;
 const COMPARE = table({ ':>': '>', ':>=': '>=', ':<': '<', ':<=': '<=', ':=': '=', ':': '=' });
 
 // The genre list as keysOf reads it (a list, else none); `genre` is only
@@ -254,7 +255,7 @@ function tag(node: TagToken): CompiledSql {
   if (name === 'energy') {
     if (node.operator.operator !== ':' && node.operator.operator !== ':=') throw opError(name, node);
     const level = foldText(text(node));
-    if (!ENERGY_LEVELS.has(level)) throw new QuerySyntaxError('energy is low, medium or high', start(node));
+    if (!ENERGY_LEVELS.includes(level)) throw new QuerySyntaxError(`energy is one of ${ENERGY_LEVELS.join(', ')}`, start(node));
     return { sql: 'IFNULL(energy = ?, 0)', params: [level] };
   }
   const at = node.field.location.start;
