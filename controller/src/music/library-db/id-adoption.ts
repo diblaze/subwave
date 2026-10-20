@@ -4,6 +4,7 @@
 
 import { requireDb } from './handle.js';
 import { moveFacetRows, syncTrackFacets } from './facets.js';
+import { touchGenreInputs } from './genre-inputs.js';
 import { canonicalId } from '../id-canonical.js';
 import { SEARCH_KEY_DDL } from './search-keys.js';
 
@@ -238,6 +239,7 @@ export function adoptRotatedIds(liveIds: ReadonlySet<string>): AdoptionResult {
       syncTrackFacets(neu);
       applied.push([old, neu]);
     }
+    if (applied.length) touchGenreInputs(d);
   });
   run(pairs);
 
