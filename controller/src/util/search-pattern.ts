@@ -15,21 +15,26 @@ export interface SearchPattern {
   test(text: string): boolean;
 }
 
-/** A case-insensitive, unanchored RE2 regex; throws `not a valid pattern: …` when RE2 refuses it. */
+// recency.nameKey's apostrophes, which it folds to one `'`.
+const APOSTROPHES = /[‘’ʼ´`]/g;
+const foldApostrophes = (text: string) => text.replace(APOSTROPHES, "'");
+// A run of whitespace as one space, as recency.nameKey keys it.
+const collapseSpace = (text: string) => text.replace(/\s+/g, ' ');
+
+/**
+ * A case-insensitive, unanchored RE2 regex over NFC text, with apostrophes
+ * folded on both sides as a name key folds them, so `/don't/` finds "Don’t".
+ * Throws `not a valid pattern: …` when RE2 refuses it.
+ */
 export function regexPattern(source: string): SearchPattern {
   if (!source) throw new Error('empty pattern');
   let re: RE2JS;
   try {
-    re = RE2JS.compile(source.normalize('NFC'), RE2JS.CASE_INSENSITIVE);
+    re = RE2JS.compile(foldApostrophes(source.normalize('NFC')), RE2JS.CASE_INSENSITIVE);
   } catch (err) {
     throw new Error(`not a valid pattern: ${(err as Error).message}`);
   }
-  return { source, test: (text) => re.test(text.normalize('NFC')) };
-}
-
-/** A run of whitespace as one space, as recency.nameKey keys it. */
-export function collapseSpace(text: string): string {
-  return text.replace(/\s+/g, ' ');
+  return { source, test: (text) => re.test(foldApostrophes(text.normalize('NFC'))) };
 }
 
 /**
@@ -39,7 +44,7 @@ export function collapseSpace(text: string): string {
  * "Don’t" and on "Hip  Hop".
  */
 export function foldText(text: string): string {
-  return collapseSpace(text.normalize('NFC').toLowerCase().replace(/[‘’ʼ´`]/g, "'"));
+  return collapseSpace(foldApostrophes(text.normalize('NFC').toLowerCase()));
 }
 
 /**

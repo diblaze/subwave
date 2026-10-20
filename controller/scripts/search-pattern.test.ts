@@ -12,6 +12,8 @@ test('a regex is case-insensitive, unanchored RE2', () => {
   assert.equal(p.test('Liver'), false);
   assert.equal(regexPattern('^åsa').test('Åsa Jinder'), true, 'Unicode case folding');
   assert.equal(regexPattern('^värld$').test('Värld'), true, 'NFC on both sides');
+  assert.equal(regexPattern("don't").test('Don’t Cry'), true, 'apostrophes fold on both sides, as a name key folds them');
+  assert.equal(regexPattern('don’t').test("Don't Cry"), true);
 });
 
 test('RE2 refuses what it cannot run in linear time, and an empty pattern', () => {

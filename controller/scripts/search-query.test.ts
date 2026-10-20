@@ -61,6 +61,13 @@ test('regex nodes run as RE2', () => {
   assert.deepEqual(ids('artist:/^the /'), ['liver']);
 });
 
+test('a text regex sees the name folded as every other text form does', () => {
+  assert.deepEqual(ids("title:/don't/"), ['gnr'], 'a straight apostrophe finds "Don’t"');
+  assert.deepEqual(ids('title:/don’t/'), ['gnr'], 'and a curly one the same');
+  assert.equal(describeQuery(parseQuery("title:/don't/")), 'title contains "don\'t"', 'which is what the box says it ran');
+  assert.deepEqual(ids("/n' roses/"), ['gnr'], 'the implicit field too');
+});
+
 test('a query takes one regex: a second is refused before liqe reads it', () => {
   for (const q of ['title:/live/ OR title:/remix/', '-title:/live/ -title:/remix/']) {
     const { error, readsAs } = compileSearch(q);

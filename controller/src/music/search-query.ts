@@ -8,7 +8,8 @@
 //   title:live                that field contains it; `*` = one or more chars,
 //   artist:the*b              `?` = one char, unanchored (liqe's wildcard rule)
 //   artist:="ABBA"            exact name (folded like the blocklist's name keys)
-//   title:/\((live|remix)\)/  RE2 regex, case-insensitive, unanchored; one per query
+//   title:/\((live|remix)\)/  RE2 regex, case-insensitive, unanchored, over the
+//                             folded name (one apostrophe, one space); one per query
 //   genre:punk                genre or a refinement of it ("Punk Rock", not "Trap");
 //                             no wildcards in a genre (use /regex/)
 //   tag:christmas mood:calm   tag = genres + moods + audio moods + Last.fm tags;
@@ -152,8 +153,9 @@ function containsPattern(node: TagToken): string {
 }
 
 // liqe keeps the delimiters and any flags (`/x/i`); matching is always
-// case-insensitive RE2, so the flags are dropped. Compiled here only to refuse a
-// pattern RE2 cannot run, with the offset.
+// case-insensitive RE2 (apostrophes folded on both sides, like the keys), so the
+// flags are dropped. Compiled here only to refuse a pattern RE2 cannot run, with
+// the offset.
 function regexSource(raw: string, node: TagToken): string {
   const source = raw.slice(1, raw.lastIndexOf('/'));
   try {
@@ -169,7 +171,8 @@ const opError = (field: string, node: TagToken) =>
 function textField(column: string, node: TagToken): CompiledSql {
   const op = node.operator.operator;
   if (node.expression.type === 'RegexExpression') {
-    return { sql: `search_match(?, COALESCE(${column},''))`, params: [regexSource(node.expression.value, node)] };
+    // Over the name key, as every other text form matches, so `/don't/` finds "Don’t".
+    return { sql: `search_match(?, ${column}_key)`, params: [regexSource(node.expression.value, node)] };
   }
   if (op === ':=') {
     const key = nameKey(text(node));
