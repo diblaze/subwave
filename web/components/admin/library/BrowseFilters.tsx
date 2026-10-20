@@ -40,19 +40,22 @@ interface BrowseFiltersProps {
   q: string; setQ: (s: string) => void;
   queryError: { message: string; offset: number; kind: 'syntax' | 'meaning' } | null;
   readsAs: string;
+  reindexing: boolean;
   sort: Sort; setSort: (s: Sort) => void;
 }
 
 // Under the search box: what the query was read as, why text ran as plain
-// text instead (with a marker under the character), or, for an empty box, three
+// text instead (with a marker under the character), whether the answer may be
+// missing tracks while the keys are rebuilt, or, for an empty box, three
 // examples to start from. The live region stays mounted so a screen reader
 // announces each new reading or error, and the box names it as its description
 // (`id`), so tabbing back to the box reads it again.
-function QueryFeedback({ id, q, queryError, readsAs, setQ }: {
+function QueryFeedback({ id, q, queryError, readsAs, reindexing, setQ }: {
   id: string;
   q: string;
   queryError: { message: string; offset: number; kind: 'syntax' | 'meaning' } | null;
   readsAs: string;
+  reindexing: boolean;
   setQ: (s: string) => void;
 }) {
   const text = q.trim();
@@ -74,6 +77,9 @@ function QueryFeedback({ id, q, queryError, readsAs, setQ }: {
         ) : readsAs ? (
           <>reads as <span className="text-ink">{readsAs}</span></>
         ) : null}
+        {reindexing && text && (
+          <div className="mt-1">Still indexing recent library changes, so this may be missing tracks; it refreshes on its own.</div>
+        )}
       </div>
       {!text && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -142,7 +148,7 @@ export function BrowseFilters(p: BrowseFiltersProps) {
             </InputGroupButton>
           </InputGroupAddon>
         </InputGroup>
-        <QueryFeedback id={feedbackId} q={p.q} queryError={p.queryError} readsAs={p.readsAs} setQ={p.setQ} />
+        <QueryFeedback id={feedbackId} q={p.q} queryError={p.queryError} readsAs={p.readsAs} reindexing={p.reindexing} setQ={p.setQ} />
         {/* Hidden, not unmounted: aria-controls must point at an element. */}
         <div id={examplesId} hidden={!showExamples} className="mt-3 border-t border-dashed border-separator-strong pt-3">
           <div className="caption mb-2">write what you want</div>

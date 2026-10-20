@@ -291,7 +291,7 @@ test('a search re-keys one chunk and leaves the rest to the background', async (
   const d = db.getDb()!;
   d.prepare('UPDATE tracks SET search_fresh = NULL').run();
   const total = staleCount();
-  refreshSearchKeys({ rows: 2 });
+  assert.equal(refreshSearchKeys({ rows: 2 }), false, 'rows left for the background');
   assert.equal(staleCount(), total - 2, 'only the budget, before the search answers');
   for (let i = 0; i < 5 && staleCount(); i++) await new Promise((r) => setImmediate(r));
   assert.equal(staleCount(), 0, 'the drain finishes the rest');
@@ -383,7 +383,7 @@ test('a held write lock neither stalls a search nor fails it', () => {
     other.exec('BEGIN IMMEDIATE');
     const started = performance.now();
     assert.deepEqual(ids('title:thunder'), ['acdc'], 'answers from the keys it has');
-    ids('title:thunder');
+    assert.equal(db.filter({ query: compileSql(parseQuery('title:thunder')), limit: 1 }).reindexing, true, 'and says it may be missing tracks');
     assert.ok(performance.now() - started < 2000, 'well short of the 5 s busy timeout');
     assert.equal(warnings.length, 1, 'one warning for a run of failures');
     assert.match(warnings[0]!, /search keys not refreshed/);
@@ -544,6 +544,27 @@ test('an ensure that finds the index built by a rival opener leaves it alone', (
   assert.equal(first, false);
   assert.deepEqual(logs, [], 'no second build');
   assert.ok(coverSql());
+});
+
+test('a search says when its keys are still being rebuilt', async () => {
+  addBulk();
+  try {
+    const query = compileSql(parseQuery('title:bulk'));
+    const during = db.filter({ query, limit: 5 });
+    assert.deepEqual({ reindexing: during.reindexing, total: during.total }, { reindexing: true, total: 1000 }, 'one chunk keyed, the rest still draining');
+    await turns(5);
+    const after = db.filter({ query, limit: 5 });
+    assert.deepEqual({ reindexing: after.reindexing, total: after.total }, { reindexing: false, total: 2500 });
+    assert.equal(db.filter({ limit: 1 }).reindexing, undefined, 'a browse with no query says nothing');
+    dropBulk();
+    // Exactly one chunk stale: the search keys them all, and says it is whole.
+    const ins = db.getDb()!.prepare(`INSERT INTO tracks (id, title, moods) VALUES (?, ?, '["neutral"]')`);
+    db.getDb()!.transaction(() => { for (let i = 0; i < 1000; i++) ins.run(`bulk-${i}`, `Bulk ${i}`); })();
+    assert.equal(refreshSearchKeys(), true);
+    assert.equal(staleCount(), 0);
+  } finally {
+    dropBulk();
+  }
 });
 
 test.after(() => {

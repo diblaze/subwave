@@ -59,6 +59,9 @@ router.get('/library/browse', requireAdmin, async (req, res) => {
       // it was read from, so the box never shows feedback for older keystrokes.
       readsAs: search?.readsAs ?? '',
       searched: typeof q.q === 'string' ? q.q.trim() : '',
+      // True while a bulk change is still being re-keyed: the search's answer
+      // may be missing tracks, so the box says so and asks again until it is whole.
+      reindexing: result.reindexing ?? false,
       moodVocab: settings.moodVocab(),
       stats: {
         total: stats.total,

@@ -57,6 +57,9 @@ export interface BrowseResponse {
   readsAs?: string;
   // The search text the feedback above belongs to.
   searched?: string;
+  // The search's stored keys are still being rebuilt after a bulk change, so
+  // its answer may be missing tracks.
+  reindexing?: boolean;
   moodVocab: string[];
   stats: {
     total: number;

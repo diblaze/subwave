@@ -243,8 +243,10 @@ function drainSoon(): void {
 
 /**
  * Bring the search keys up to date before a query search: up to `rows` stale
- * rows now (one chunk by default), the rest in the background. Never throws;
- * returns false when a re-key failed (and warned).
+ * rows now (one chunk by default), the rest in the background. Never throws.
+ * Returns whether every row's keys are current, so a search can say when its
+ * answer may be missing tracks: false while a bulk re-key is still draining,
+ * and after a failed one (which warned).
  */
 export function refreshSearchKeys({ rows = CHUNK_ROWS }: { rows?: number } = {}): boolean {
   try {
@@ -255,7 +257,8 @@ export function refreshSearchKeys({ rows = CHUNK_ROWS }: { rows?: number } = {})
     if (mark === freshAt) return true;
     // Outside a write lock first: most refreshes find nothing to do, and waiting
     // for the lock while a tagger walk holds it would stall the event loop.
-    if (!d.prepare('SELECT 1 FROM tracks WHERE search_fresh IS NULL LIMIT 1').get()) {
+    const anyStale = d.prepare('SELECT 1 FROM tracks WHERE search_fresh IS NULL LIMIT 1');
+    if (!anyStale.get()) {
       freshAt = mark;
       return true;
     }
@@ -265,8 +268,10 @@ export function refreshSearchKeys({ rows = CHUNK_ROWS }: { rows?: number } = {})
       if (n < limit) return true;
       done += n;
     }
+    // The budget ran out exactly at the last stale row, or there are more.
+    if (!anyStale.get()) return true;
     drainSoon();
-    return true;
+    return false;
   } catch (err) {
     warn(err);
     return false;

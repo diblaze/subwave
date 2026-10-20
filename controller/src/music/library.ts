@@ -677,11 +677,13 @@ export interface FilteredRow {
   instrumental?: boolean | null;
 }
 
-export function filter(opts: FilterOpts = {}): { total: number; rows: FilteredRow[] } {
+export function filter(opts: FilterOpts = {}): { total: number; rows: FilteredRow[]; reindexing?: boolean } {
   if (!loaded) return { total: 0, rows: [] };
   const res = db.filter(opts);
   return {
     total: res.total,
+    // A query search's keys are still being rebuilt (see library-db filter).
+    ...(res.reindexing !== undefined && { reindexing: res.reindexing }),
     rows: res.rows.map(r => ({
       id: r.id,
       title: r.title,
