@@ -46,8 +46,10 @@ interface BrowseFiltersProps {
 // Under the search box: what the query was read as, why text ran as plain
 // text instead (with a marker under the character), or, for an empty box, three
 // examples to start from. The live region stays mounted so a screen reader
-// announces each new reading or error.
-function QueryFeedback({ q, queryError, readsAs, setQ }: {
+// announces each new reading or error, and the box names it as its description
+// (`id`), so tabbing back to the box reads it again.
+function QueryFeedback({ id, q, queryError, readsAs, setQ }: {
+  id: string;
   q: string;
   queryError: { message: string; offset: number; kind: 'syntax' | 'meaning' } | null;
   readsAs: string;
@@ -58,7 +60,7 @@ function QueryFeedback({ q, queryError, readsAs, setQ }: {
   const quoted = `"${text.replace(/[\\"]/g, '\\$&')}"`;
   return (
     <>
-      <div className="field-hint mt-1.5" aria-live="polite">
+      <div id={id} className="field-hint mt-1.5" aria-live="polite">
         {queryError && text ? (
           <>
             <pre className="m-0 overflow-x-auto font-mono text-ink">{text}{'\n'}{' '.repeat(Math.min(queryError.offset, text.length))}^</pre>
@@ -91,6 +93,7 @@ export function BrowseFilters(p: BrowseFiltersProps) {
   const [showAllMoods, setShowAllMoods] = useState(false);
   const [showExamples, setShowExamples] = useState(false);
   const examplesId = useId();
+  const feedbackId = useId();
   const ranked = useMemo(
     () => [...p.moodVocab].sort((a, b) => (p.moodCounts[b] || 0) - (p.moodCounts[a] || 0)),
     [p.moodVocab, p.moodCounts],
@@ -121,6 +124,7 @@ export function BrowseFilters(p: BrowseFiltersProps) {
           <InputGroupAddon><Search /></InputGroupAddon>
           <InputGroupInput
             aria-label="Search tracks"
+            aria-describedby={feedbackId}
             placeholder="search tracks, or write a query — ? for examples"
             value={p.q}
             onChange={(e: ChangeEvent<HTMLInputElement>) => p.setQ(e.target.value)}
@@ -138,7 +142,7 @@ export function BrowseFilters(p: BrowseFiltersProps) {
             </InputGroupButton>
           </InputGroupAddon>
         </InputGroup>
-        <QueryFeedback q={p.q} queryError={p.queryError} readsAs={p.readsAs} setQ={p.setQ} />
+        <QueryFeedback id={feedbackId} q={p.q} queryError={p.queryError} readsAs={p.readsAs} setQ={p.setQ} />
         {/* Hidden, not unmounted: aria-controls must point at an element. */}
         <div id={examplesId} hidden={!showExamples} className="mt-3 border-t border-dashed border-separator-strong pt-3">
           <div className="caption mb-2">write what you want</div>
