@@ -3,13 +3,27 @@
 // genre runs and its tag and mood lists, so a query compares stored text with
 // native LIKE and = instead of running JS for every row.
 //
-// Kept current without touching any writer: a pure-SQL trigger (STALE_TRIGGER,
-// no JS functions, so it fires on any connection and on an older controller)
-// clears `search_fresh` when a source column changes, new rows start with it
-// NULL, and before a query search refreshSearchKeys() recomputes just those rows,
-// found through a partial index. It does nothing when the database has not
-// changed since the last refresh.
+// Kept current without touching any writer: a pure-SQL trigger
+// (tracks_search_stale, no JS functions, so it fires on any connection and on an
+// older controller) clears `search_fresh` when a source column's value changes,
+// new rows start with it NULL, and before a query search refreshSearchKeys()
+// re-keys just those rows, found through a partial index. It does nothing when
+// the database has not changed since it last found every row fresh.
+//
+// The columns are schema (migration 29); the trigger and its index are not.
+// Like genre-inputs.ts they sit outside the user_version chain and are checked
+// on every open: a migration that rebuilds tracks drops them with the table, and
+// the next ensure puts them back. The check compares the trigger's stored
+// definition, not only its name, so a changed definition replaces the old one on
+// the next open (CREATE ... IF NOT EXISTS would keep it). A trigger that had to
+// be put back or replaced may have let writes through unmarked, so every row is
+// marked stale with it. A migration that drops a source column must DROP
+// TRIGGER tracks_search_stale first: SQLite refuses to drop a column a trigger
+// names, and keys built from one column fewer need a new definition here anyway.
+// The keys also depend on code (nameKey, artistParticipantKeys, genreRuns,
+// normGenre): a change there needs a migration that clears `search_fresh`.
 
+import type Database from 'better-sqlite3';
 import { getDbNonce, requireDb } from './handle.js';
 import { safeParseArray } from './rows.js';
 import { artistNameKey, artistParticipantKeys, nameKey } from '../recency.js';
@@ -23,21 +37,61 @@ export const SEARCH_KEY_COLUMNS = [
 // `genre` is not a source: it is generated from genres[0].
 const SOURCE_COLUMNS = ['title', 'artist', 'album', 'genres', 'moods', 'audio_moods', 'lastfm_tags'];
 
-/**
- * The schema migration 29 adds: the key columns, the stale marker, its trigger and index.
- * `UPDATE OF` fires whenever a statement names a column, and every tagger walk
- * upserts title/artist/album/genres unchanged, so the trigger only marks a row
- * whose value actually changed. Dropped first: CREATE ... IF NOT EXISTS would
- * keep an older definition.
- */
+/** The columns migration 29 adds: the keys and the stale marker. */
 export const SEARCH_KEY_DDL = {
   columns: [...SEARCH_KEY_COLUMNS, 'search_fresh'] as const,
-  trigger: `DROP TRIGGER IF EXISTS tracks_search_stale;
-    CREATE TRIGGER tracks_search_stale AFTER UPDATE OF ${SOURCE_COLUMNS.join(', ')} ON tracks
-    WHEN ${SOURCE_COLUMNS.map(c => `NEW.${c} IS NOT OLD.${c}`).join(' OR ')}
-    BEGIN UPDATE tracks SET search_fresh = NULL WHERE id = NEW.id; END;`,
-  index: 'CREATE INDEX IF NOT EXISTS tracks_search_stale_idx ON tracks(id) WHERE search_fresh IS NULL;',
 };
+
+const TRIGGER = 'tracks_search_stale';
+const INDEX = 'tracks_search_stale_idx';
+// `UPDATE OF` fires whenever a statement names a column, and every tagger walk
+// upserts title/artist/album/genres unchanged, so the WHEN marks only a row
+// whose value actually changed. Compared verbatim with sqlite_master.sql, which
+// keeps a CREATE as written (less IF NOT EXISTS and the `;`), so this text is
+// the definition: keep both free of either.
+const TRIGGER_SQL = `CREATE TRIGGER ${TRIGGER} AFTER UPDATE OF ${SOURCE_COLUMNS.join(', ')} ON tracks
+    WHEN ${SOURCE_COLUMNS.map(c => `NEW.${c} IS NOT OLD.${c}`).join(' OR ')}
+    BEGIN UPDATE tracks SET search_fresh = NULL WHERE id = NEW.id; END`;
+const INDEX_SQL = `CREATE INDEX ${INDEX} ON tracks(id) WHERE search_fresh IS NULL`;
+
+function stored(d: Database.Database): { trigger?: string; index?: string } {
+  const rows = d.prepare(
+    `SELECT type, sql FROM sqlite_master WHERE (type = 'trigger' AND name = ?) OR (type = 'index' AND name = ?)`,
+  ).all(TRIGGER, INDEX) as Array<{ type: 'trigger' | 'index'; sql: string }>;
+  return Object.fromEntries(rows.map(r => [r.type, r.sql]));
+}
+
+/**
+ * The stale trigger and its index, on every open. Reads first and writes only
+ * when one is missing or differs. Warns rather than throws, like
+ * ensureGenreInputs; returns whether both are in place.
+ */
+export function ensureSearchKeys(d: Database.Database): boolean {
+  try {
+    const now = stored(d);
+    if (now.trigger === TRIGGER_SQL && now.index === INDEX_SQL) return true;
+    d.transaction(() => {
+      // Again under the write lock: a rival opener may have put them in place.
+      const s = stored(d);
+      if (s.trigger !== TRIGGER_SQL) {
+        d.exec(`DROP TRIGGER IF EXISTS ${TRIGGER}`);
+        d.exec(TRIGGER_SQL);
+        d.prepare('UPDATE tracks SET search_fresh = NULL WHERE search_fresh IS NOT NULL').run();
+      }
+      if (s.index !== INDEX_SQL) {
+        d.exec(`DROP INDEX IF EXISTS ${INDEX}`);
+        d.exec(INDEX_SQL);
+      }
+    }).immediate();
+    return true;
+  } catch (err) {
+    console.warn(
+      `[library-db] search keys not ensured (${(err as Error).message}); ` +
+        'a library search may miss edits until the next open retries',
+    );
+    return false;
+  }
+}
 
 /** Separates the keys in a list column; a typed query can never contain it. */
 export const KEY_SEP = '\u001f';

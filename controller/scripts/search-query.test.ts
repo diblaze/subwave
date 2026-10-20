@@ -208,17 +208,37 @@ test('an upsert that changes nothing leaves the keys fresh', () => {
   assert.equal(d.prepare('SELECT COUNT(*) FROM tracks WHERE search_fresh IS NULL').pluck().get(), 0);
 });
 
-test('migration 29 replaces an older stale trigger', async () => {
+const staleCount = () => db.getDb()!.prepare('SELECT COUNT(*) FROM tracks WHERE search_fresh IS NULL').pluck().get() as number;
+
+test('an open replaces a stale trigger definition, at any user_version', async () => {
   const d = db.getDb()!;
-  // The first definition fired on every write that named a source column.
+  // The first draft's definition fired on every write that named a source column.
   d.exec(`DROP TRIGGER tracks_search_stale;
     CREATE TRIGGER tracks_search_stale AFTER UPDATE OF title ON tracks
     BEGIN UPDATE tracks SET search_fresh = NULL WHERE id = NEW.id; END;`);
-  d.pragma('user_version = 28');
+  assert.equal(d.pragma('user_version', { simple: true }), 29, 'already upgraded, so no migration runs');
   db.close();
   await db.open({ embeddingDim: 4 });
   const sql = db.getDb()!.prepare(`SELECT sql FROM sqlite_master WHERE name = 'tracks_search_stale'`).pluck().get();
   assert.match(String(sql), /WHEN NEW\.title IS NOT OLD\.title/);
+  assert.ok(staleCount() > 0, 'a replaced trigger may have missed writes, so every row is re-keyed');
+  assert.deepEqual(ids('title:thunder'), ['acdc']);
+  assert.equal(staleCount(), 0);
+});
+
+test('an open puts back the trigger and index a table rebuild dropped', async () => {
+  const d = db.getDb()!;
+  // A migration that rebuilds tracks drops its triggers and indexes with it,
+  // and a write made before the next open goes unmarked.
+  d.exec('DROP TRIGGER tracks_search_stale; DROP INDEX tracks_search_stale_idx;');
+  d.prepare(`UPDATE tracks SET title = 'Highway Song' WHERE id = 'acdc'`).run();
+  assert.equal(staleCount(), 0, 'nothing marked the edit');
+  db.close();
+  await db.open({ embeddingDim: 4 });
+  const names = db.getDb()!.prepare(`SELECT name FROM sqlite_master WHERE name LIKE 'tracks_search_stale%' ORDER BY name`).pluck().all();
+  assert.deepEqual(names, ['tracks_search_stale', 'tracks_search_stale_idx']);
+  assert.deepEqual(ids('title:highway'), ['acdc'], 'the unmarked edit is re-keyed');
+  db.getDb()!.prepare(`UPDATE tracks SET title = 'Thunderstruck' WHERE id = 'acdc'`).run();
 });
 
 test('genres in every stored shape key like show-filter reads them', () => {
