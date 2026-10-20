@@ -167,6 +167,11 @@ test('describeQuery reads a query back in plain words', () => {
 test('a syntax error names the character, not a line and column', () => {
   assert.match(compileSearch('AC/DC').error!.message, /^"\/" is not query syntax here/);
   assert.equal(compileSearch('AC/DC').error!.kind, 'syntax');
+  const group = compileSearch('title:(live OR remix)').error!;
+  assert.equal(group.kind, 'meaning', 'a field-scoped group gets no "search as written" offer, which would find nothing');
+  assert.match(group.message, /write title:a OR title:b, or title:\/a\|b\//);
+  assert.equal(compileSearch('-(live OR remix)').error!.kind, 'syntax', 'a bracket after no field is still syntax');
+  assert.equal(compileSearch('Re:(mix)').error!.kind, 'syntax', 'nor after a word that is not a field');
   assert.equal(compileSearch('year:>abc').error!.kind, 'meaning', 'valid syntax, wrong value');
   assert.match(compileSearch('title:"unclosed').error!.message, /unclosed quote/);
 });

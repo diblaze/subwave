@@ -30,8 +30,10 @@ import { normGenre } from './genre-fold.js';
 import { ERA_YEAR_SQL } from './library-db/browse.js';
 import { KEY_SEP } from './library-db/search-keys.js';
 
-// `syntax`: liqe could not parse the text (often a plain name with a `/` or a
-// quote in it). `meaning`: it parsed, but a field or value is not one we run.
+// `syntax`: liqe could not parse the text, most often a plain name with a `/`
+// or a quote in it, so the box offers to search it as written. `meaning`: a
+// form we do not run (an unknown field, a value of the wrong kind, a
+// field-scoped group), where the text as written would not find what was meant.
 export class QuerySyntaxError extends Error {
   constructor(message: string, readonly offset: number, readonly kind: 'syntax' | 'meaning' = 'meaning') {
     super(message);
@@ -45,6 +47,8 @@ export interface CompiledSql {
 
 // SQLite caps an expression tree at 1000 deep; a search box never needs this much.
 export const QUERY_MAX = 500;
+// A field name and its `:` right before the offset liqe stopped at.
+const FIELD_BEFORE = /([^\s():"]+):$/;
 
 export function parseQuery(text: string): LiqeQuery {
   if (text.length > QUERY_MAX) throw new QuerySyntaxError(`A query is at most ${QUERY_MAX} characters`, QUERY_MAX, 'meaning');
@@ -53,6 +57,11 @@ export function parseQuery(text: string): LiqeQuery {
   } catch (err) {
     // Input that ends early never lands here: liqe reports it as "Found no parsings."
     if (err instanceof LiqeSyntaxError) {
+      // liqe does not parse a field-scoped group (`title:(live OR remix)`).
+      const field = text[err.offset] === '(' ? FIELD_BEFORE.exec(text.slice(0, err.offset))?.[1] : undefined;
+      if (field && knownField(field.toLowerCase())) {
+        throw new QuerySyntaxError(`${field}:( … ) is not supported: write ${field}:a OR ${field}:b, or ${field}:/a|b/`, err.offset, 'meaning');
+      }
       throw new QuerySyntaxError(`"${text[err.offset]}" is not query syntax here`, err.offset, 'syntax');
     }
     // liqe's "Found no parsings." carries no position: the input ended mid-token.
@@ -77,6 +86,8 @@ const LISTS = table({
   tag: [GENRES_JSON, `COALESCE(moods,'[]')`, `COALESCE(audio_moods,'[]')`, `COALESCE(lastfm_tags,'[]')`],
 });
 const TEXT_COLUMNS = ['title', 'artist', 'album'] as const;
+const knownField = (name: string) =>
+  (TEXT_COLUMNS as readonly string[]).includes(name) || !!LISTS[name] || !!NUMERIC[name] || name === 'energy';
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, '\\$&');
 // One whole entry in a KEY_SEP-delimited key list.
