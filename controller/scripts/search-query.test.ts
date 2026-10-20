@@ -448,6 +448,7 @@ test('a list wildcard does not run from one tag into the next', () => {
   // acdc carries "hard rock" and "r&b": `tag:rock*r` would match across them on the joined list.
   assert.deepEqual(ids('tag:rock*r'), []);
   assert.deepEqual(ids('tag:har*rock'), ['acdc', 'gnr']);
+  assert.deepEqual(ids('-tag:rock*r title:thunder'), ['acdc'], 'and NOT of one that passes only the list-wide LIKE holds');
 });
 
 test('a list wildcard and regex see a tag spaced as its key is', () => {

@@ -205,9 +205,17 @@ function listField(field: string, node: TagToken): CompiledSql {
   }
   // A regex, or a wildcard (which on the joined list could run from one tag into
   // the next), is tested tag by tag over the stored keys.
-  if (e.type === 'RegexExpression' || (field !== 'genre' && hasWildcard(node) && op === ':')) {
-    const source = e.type === 'RegexExpression' ? regexSource(e.value, node) : wildcardSource(text(node));
-    return { sql: `search_match_entry(?, ${field}_keys, ?)`, params: [source, KEY_SEP] };
+  if (e.type === 'RegexExpression') {
+    return { sql: `search_match_entry(?, ${field}_keys, ?)`, params: [regexSource(e.value, node), KEY_SEP] };
+  }
+  if (field !== 'genre' && hasWildcard(node) && op === ':') {
+    // The same LIKE over the whole list first: it holds wherever one tag
+    // matches, and turns most rows away natively before the per-tag check runs
+    // JS on them (37 tag wildcards over 150k tracks took 9.5 s without it).
+    return {
+      sql: `(${field}_keys LIKE ? ESCAPE '\\' AND search_match_entry(?, ${field}_keys, ?))`,
+      params: [containsPattern(node), wildcardSource(text(node)), KEY_SEP],
+    };
   }
   if (op !== ':' && op !== ':=') throw opError(field, node);
   if (field !== 'genre') {
