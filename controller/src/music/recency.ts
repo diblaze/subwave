@@ -140,6 +140,9 @@ const ARTIST_ROOT_ALIASES = new Map<string, string>([
 // widens a MATCHING key — wrong for a hard drop with no never-starve behind it.
 // `schemas/blocklist.ts` normText RESTATES this fold (a mirrored schema module
 // may import only zod); scripts/blocklist-name-fold.test.ts pins them in step.
+// Its output is also STORED, as the Library search keys
+// (library-db/search-keys.ts): a change here needs a migration that clears
+// `search_fresh`, or every stored key stays on the old fold.
 export function nameKey(raw: unknown): string {
   return String(raw ?? '').normalize('NFC').toLowerCase().replace(APOSTROPHES, "'").replace(/\s+/g, ' ').trim();
 }
