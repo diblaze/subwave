@@ -13,7 +13,7 @@ process.env.STATE_DIR = stateDir;
 
 const db = await import('../src/music/library-db.js');
 const { compileSearch, compileSql, describeQuery, parseQuery, QuerySyntaxError } = await import('../src/music/search-query.js');
-const { ensureSearchKeys, refreshSearchKeys } = await import('../src/music/library-db/search-keys.js');
+const { ensureSearchIndex, ensureSearchKeys, refreshSearchKeys } = await import('../src/music/library-db/search-keys.js');
 await db.open({ embeddingDim: 4 });
 
 type Row = { id: string; title: string; artist: string; album: string; genres: string[]; year: number; moods?: string[]; energy?: 'low' | 'medium' | 'high'; bpm?: number };
@@ -453,6 +453,97 @@ test('malformed list JSON neither fails a search nor matches it', () => {
   } finally {
     d.prepare(`DELETE FROM tracks WHERE id = 'broken'`).run();
   }
+});
+
+test('a search reads the covering index, never the wide rows (#1937)', () => {
+  const d = db.getDb()!;
+  const tracksPlan = (q: string) => {
+    const { query } = compileSearch(q);
+    return (d.prepare(`EXPLAIN QUERY PLAN SELECT rowid FROM tracks WHERE ${query.sql}`).all(...query.params) as Array<{ detail: string }>)
+      .map((r) => r.detail).filter((s) => /\btracks\b/.test(s));
+  };
+  // One query per compiled form, and the plain-text fallback.
+  const queries = ['live', 'title:live', 'title:son*', 'title:="x"', 'artist:="x"', 'title:/^l/', '/x/', 'genre:pop', 'genre:="pop"',
+    'genre:/po/', 'tag:calm', 'tag:="calm"', 'tag:c*m', 'mood:/ca/', 'mood:calm', 'year:[1990 TO 1999]', 'bpm:>100', 'energy:high',
+    '-genre:pop (year:1990 OR bpm:<90)', 'AC/DC'];
+  const check = (label: string) => {
+    for (const q of queries) {
+      const plan = tracksPlan(q);
+      assert.ok(plan.length > 0 && plan.every((s) => /^(SCAN|SEARCH) tracks USING COVERING INDEX /.test(s)), `${label} ${q}: ${plan.join(' | ')}`);
+    }
+  };
+  check('no ANALYZE');
+  d.exec('ANALYZE');
+  try {
+    check('ANALYZE');
+  } finally {
+    d.exec('DROP TABLE IF EXISTS sqlite_stat1');
+  }
+});
+
+const coverSql = () => db.getDb()!.prepare(`SELECT sql FROM sqlite_master WHERE name = 'tracks_search_idx'`).pluck().get() as string | undefined;
+
+test('an open builds the covering index, and replaces one that differs', async () => {
+  const want = coverSql();
+  assert.match(String(want), /\(title_key, .*, era_untrusted, bpm, energy\)$/);
+  // As a station that ran migration 29 before the index existed: no migration runs.
+  db.getDb()!.exec('DROP INDEX tracks_search_idx');
+  db.close();
+  await db.open({ embeddingDim: 4 });
+  assert.equal(coverSql(), want);
+  db.getDb()!.exec('DROP INDEX tracks_search_idx; CREATE INDEX tracks_search_idx ON tracks(title_key)');
+  db.close();
+  await db.open({ embeddingDim: 4 });
+  assert.equal(coverSql(), want, 'a changed definition is replaced');
+  assert.deepEqual(ids('title:thunder'), ['acdc']);
+});
+
+test('a covering index that cannot be built warns, and searches still answer', () => {
+  const d = db.getDb()!;
+  d.exec('DROP INDEX tracks_search_idx');
+  const readonly = new Database(join(stateDir, 'library.db'), { readonly: true });
+  const warn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (msg: string) => { warnings.push(msg); };
+  try {
+    ensureSearchIndex(readonly);
+    assert.match(warnings[0] ?? '', /search index not built/);
+    assert.deepEqual(ids('title:thunder'), ['acdc'], 'from the table, slower but exact');
+  } finally {
+    console.warn = warn;
+    readonly.close();
+    ensureSearchIndex(d);
+  }
+  assert.ok(coverSql());
+});
+
+test('an ensure that finds the index built by a rival opener leaves it alone', () => {
+  const d = db.getDb()!;
+  // The first look misses it, as before a rival opener's build commits.
+  let first = true;
+  const racing = new Proxy(d, {
+    get(target, key) {
+      if (key === 'prepare') {
+        return (sql: string) => {
+          if (first && sql.includes('sqlite_master')) { first = false; return { all: () => [] }; }
+          return target.prepare(sql);
+        };
+      }
+      const value = Reflect.get(target, key);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const log = console.log;
+  const logs: string[] = [];
+  console.log = (msg: string) => { logs.push(msg); };
+  try {
+    ensureSearchIndex(racing);
+  } finally {
+    console.log = log;
+  }
+  assert.equal(first, false);
+  assert.deepEqual(logs, [], 'no second build');
+  assert.ok(coverSql());
 });
 
 test.after(() => {

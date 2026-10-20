@@ -10,14 +10,21 @@
 // re-keys just those rows, found through a partial index. It does nothing when
 // the database has not changed since it last found every row fresh.
 //
-// The columns are schema (migration 29); the trigger and its index are not.
+// A search never reads the rows themselves: the keys are columns added after
+// kilobytes of analysis JSON, so reaching them walks each row's overflow pages,
+// which made a keyed search twice as slow as develop's LIKE over the leading
+// title column on a real library (#1937). A covering index over the keys and
+// every other column a compiled query reads (tracks_search_idx) is what the
+// search scans instead; browse.filter() matches in a subquery that reads only it.
+//
+// The columns are schema (migration 29); the trigger and the indexes are not.
 // Like genre-inputs.ts they sit outside the user_version chain and are checked
 // on every open: a migration that rebuilds tracks drops them with the table, and
-// the next ensure puts them back. The check compares the trigger's stored
-// definition, not only its name, so a changed definition replaces the old one on
-// the next open (CREATE ... IF NOT EXISTS would keep it). A trigger that had to
-// be put back or replaced may have let writes through unmarked, so every row is
-// marked stale with it. A migration that drops a source column must DROP
+// the next ensure puts them back. The check compares each stored definition,
+// not only its name, so a changed definition replaces the old one on the next
+// open (CREATE ... IF NOT EXISTS would keep it). A trigger that had to be put
+// back or replaced may have let writes through unmarked, so every row is marked
+// stale with it. A migration that drops a source column must DROP
 // TRIGGER tracks_search_stale first: SQLite refuses to drop a column a trigger
 // names, and keys built from one column fewer need a new definition here anyway.
 // The keys also depend on code (nameKey, artistParticipantKeys, genreRuns,
@@ -50,8 +57,15 @@ export const SEARCH_KEY_DDL = {
   columns: [...SEARCH_KEY_COLUMNS, 'search_fresh'] as const,
 };
 
+// The other columns a compiled query reads (music/search-query.ts): the genres a
+// genre regex walks, ERA_YEAR_SQL's inputs, bpm and energy. A query that read
+// any column outside the covering index would scan the wide rows again;
+// scripts/search-query.test.ts checks every field's plan.
+const QUERY_COLUMNS = ['genres', 'year', 'original_year', 'is_compilation', 'era_untrusted', 'bpm', 'energy'];
+
 const TRIGGER = 'tracks_search_stale';
 const INDEX = 'tracks_search_stale_idx';
+const COVER = 'tracks_search_idx';
 // `UPDATE OF` fires whenever a statement names a column, and every tagger walk
 // upserts title/artist/album/genres unchanged, so the WHEN marks only a row
 // whose value actually changed. Compared verbatim with sqlite_master.sql, which
@@ -61,12 +75,13 @@ const TRIGGER_SQL = `CREATE TRIGGER ${TRIGGER} AFTER UPDATE OF ${SOURCE_COLUMNS.
     WHEN ${SOURCE_COLUMNS.map(c => `NEW.${c} IS NOT OLD.${c}`).join(' OR ')}
     BEGIN UPDATE tracks SET search_fresh = NULL WHERE id = NEW.id; END`;
 const INDEX_SQL = `CREATE INDEX ${INDEX} ON tracks(id) WHERE search_fresh IS NULL`;
+const COVER_SQL = `CREATE INDEX ${COVER} ON tracks(${[...SEARCH_KEY_COLUMNS, ...QUERY_COLUMNS].join(', ')})`;
 
-function stored(d: Database.Database): { trigger?: string; index?: string } {
-  const rows = d.prepare(
-    `SELECT type, sql FROM sqlite_master WHERE (type = 'trigger' AND name = ?) OR (type = 'index' AND name = ?)`,
-  ).all(TRIGGER, INDEX) as Array<{ type: 'trigger' | 'index'; sql: string }>;
-  return Object.fromEntries(rows.map(r => [r.type, r.sql]));
+// Each object's stored definition, by name.
+function stored(d: Database.Database): Map<string, string> {
+  const rows = d.prepare(`SELECT name, sql FROM sqlite_master WHERE name IN (?, ?, ?)`)
+    .all(TRIGGER, INDEX, COVER) as Array<{ name: string; sql: string }>;
+  return new Map(rows.map(r => [r.name, r.sql]));
 }
 
 /**
@@ -77,16 +92,16 @@ function stored(d: Database.Database): { trigger?: string; index?: string } {
 export function ensureSearchKeys(d: Database.Database): boolean {
   try {
     const now = stored(d);
-    if (now.trigger === TRIGGER_SQL && now.index === INDEX_SQL) return true;
+    if (now.get(TRIGGER) === TRIGGER_SQL && now.get(INDEX) === INDEX_SQL) return true;
     d.transaction(() => {
       // Again under the write lock: a rival opener may have put them in place.
       const s = stored(d);
-      if (s.trigger !== TRIGGER_SQL) {
+      if (s.get(TRIGGER) !== TRIGGER_SQL) {
         d.exec(`DROP TRIGGER IF EXISTS ${TRIGGER}`);
         d.exec(TRIGGER_SQL);
         d.prepare('UPDATE tracks SET search_fresh = NULL WHERE search_fresh IS NOT NULL').run();
       }
-      if (s.index !== INDEX_SQL) {
+      if (s.get(INDEX) !== INDEX_SQL) {
         d.exec(`DROP INDEX IF EXISTS ${INDEX}`);
         d.exec(INDEX_SQL);
       }
@@ -98,6 +113,32 @@ export function ensureSearchKeys(d: Database.Database): boolean {
         'a library search may miss edits until the next open retries',
     );
     return false;
+  }
+}
+
+/**
+ * The covering index a search scans, on every open, like ensureSearchKeys.
+ * Called after migration 29's fill, so the fill does not also update an index
+ * row by row. A build reads every row once and is logged with its time, like
+ * ensureStatsIndexes; one that fails (a rival opener holding the write lock)
+ * warns, and searches scan the table, exact but slower, until the next open.
+ */
+export function ensureSearchIndex(d: Database.Database): void {
+  try {
+    if (stored(d).get(COVER) === COVER_SQL) return;
+    d.transaction(() => {
+      if (stored(d).get(COVER) === COVER_SQL) return;
+      const started = performance.now();
+      console.log('[library-db] building the search index…');
+      d.exec(`DROP INDEX IF EXISTS ${COVER}`);
+      d.exec(COVER_SQL);
+      console.log(`[library-db] search index built in ${Math.round(performance.now() - started)}ms`);
+    }).immediate();
+  } catch (err) {
+    console.warn(
+      `[library-db] search index not built (${(err as Error).message}); ` +
+        'library searches scan the table until the next open retries',
+    );
   }
 }
 

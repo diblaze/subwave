@@ -58,7 +58,9 @@ export function filter(opts: FilterOpts = {}): { total: number; rows: TrackRecor
     // The compiled query reads the stored search keys; bring them up to date.
     // Bounded and never throws: a bulk re-key finishes in the background.
     refreshSearchKeys();
-    where.push(`(${opts.query.sql})`);
+    // Matched in a subquery that reads only the covering search index, never the
+    // wide rows (#1937, search-keys.ts); the queries below read just the matches.
+    where.push(`rowid IN (SELECT rowid FROM tracks WHERE ${opts.query.sql})`);
     params.push(...opts.query.params);
   }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';

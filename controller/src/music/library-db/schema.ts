@@ -2,7 +2,7 @@
 
 import Database from 'better-sqlite3';
 import { AUDIO_EMBEDDING_DIM, requireDb } from './handle.js';
-import { SEARCH_KEY_DDL, ensureSearchKeys, fillSearchKeys } from './search-keys.js';
+import { SEARCH_KEY_DDL, ensureSearchIndex, ensureSearchKeys, fillSearchKeys } from './search-keys.js';
 import { ensureFacetStatus } from './facets.js';
 import { ensureGenreInputs, touchGenreInputs } from './genre-inputs.js';
 
@@ -481,8 +481,12 @@ export async function migrate(embeddingDim: number, reseed = false, adoptStoredD
   // genres, moods, audio_moods, lastfm_tags), and SQLite refuses to DROP COLUMN
   // any of them while it exists: a migration above that drops one must DROP
   // TRIGGER tracks_search_stale first. Filled once on the upgrade to 29, so the
-  // first search after it does not pay for the whole library.
+  // first search after it does not pay for the whole library. The covering index
+  // a search scans comes after the fill, which would otherwise update it row by
+  // row; a station that ran migration 29 before the index existed builds it on
+  // its next open here. Never throws either.
   if (ensureSearchKeys(d) && userVersion < 29) fillSearchKeys();
+  ensureSearchIndex(d);
 
   // Reconcile the requested embedding dim against what physically exists. The
   // vec0 table's FLOAT[N] schema is the authority for what inserts accept, not
