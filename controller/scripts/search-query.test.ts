@@ -13,7 +13,7 @@ process.env.STATE_DIR = stateDir;
 
 const db = await import('../src/music/library-db.js');
 const { compileSearch, compileSql, describeQuery, parseQuery, QuerySyntaxError } = await import('../src/music/search-query.js');
-const { refreshSearchKeys } = await import('../src/music/library-db/search-keys.js');
+const { ensureSearchKeys, refreshSearchKeys } = await import('../src/music/library-db/search-keys.js');
 await db.open({ embeddingDim: 4 });
 
 type Row = { id: string; title: string; artist: string; album: string; genres: string[]; year: number; moods?: string[]; energy?: 'low' | 'medium' | 'high'; bpm?: number };
@@ -256,6 +256,80 @@ test('a search re-keys one chunk and leaves the rest to the background', async (
   assert.equal(staleCount(), total - 2, 'only the budget, before the search answers');
   for (let i = 0; i < 5 && staleCount(); i++) await new Promise((r) => setImmediate(r));
   assert.equal(staleCount(), 0, 'the drain finishes the rest');
+});
+
+// Enough rows for three chunks; tagged, so Browse lists them.
+const addBulk = () => {
+  const d = db.getDb()!;
+  const ins = d.prepare(`INSERT INTO tracks (id, title, moods) VALUES (?, ?, '["neutral"]')`);
+  d.transaction(() => { for (let i = 0; i < 2500; i++) ins.run(`bulk-${i}`, `Bulk ${i}`); })();
+};
+const dropBulk = () => db.getDb()!.prepare(`DELETE FROM tracks WHERE id LIKE 'bulk-%'`).run();
+const turns = async (n: number) => { for (let i = 0; i < n && staleCount(); i++) await new Promise((r) => setImmediate(r)); };
+
+test('a bulk re-key drains one chunk per turn of the event loop', async () => {
+  addBulk();
+  try {
+    const total = staleCount();
+    assert.ok(total > 2000);
+    refreshSearchKeys();
+    assert.equal(staleCount(), total - 1000, 'one chunk before the search answers');
+    refreshSearchKeys({ rows: 0 });
+    await new Promise((r) => setImmediate(r));
+    assert.equal(staleCount(), total - 2000, 'then one chunk per turn, from a single drain');
+    await turns(5);
+    assert.equal(staleCount(), 0);
+  } finally {
+    dropBulk();
+  }
+});
+
+test('a drain that loses the lock or the database stops, and the next search resumes', async () => {
+  addBulk();
+  const other = new Database(join(stateDir, 'library.db'));
+  const warn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (msg: string) => { warnings.push(msg); };
+  try {
+    refreshSearchKeys();
+    const left = staleCount();
+    other.exec('BEGIN IMMEDIATE');
+    await turns(3);
+    assert.equal(staleCount(), left, 'a busy chunk re-keys nothing');
+    assert.equal(warnings.length, 1);
+    other.exec('COMMIT');
+    refreshSearchKeys();
+    assert.equal(staleCount(), left - 1000, 'the next search resumes');
+    db.close();
+    await new Promise((r) => setImmediate(r));
+    await db.open({ embeddingDim: 4 });
+    assert.equal(staleCount(), left - 1000, 'a closed database ends the drain');
+    refreshSearchKeys({ rows: Infinity });
+    assert.equal(staleCount(), 0);
+  } finally {
+    console.warn = warn;
+    if (other.inTransaction) other.exec('ROLLBACK');
+    other.close();
+    dropBulk();
+  }
+});
+
+test('an ensure that cannot write warns and reports it, and never throws', () => {
+  const d = db.getDb()!;
+  d.exec('DROP TRIGGER tracks_search_stale');
+  const readonly = new Database(join(stateDir, 'library.db'), { readonly: true });
+  const warn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (msg: string) => { warnings.push(msg); };
+  try {
+    assert.equal(ensureSearchKeys(readonly), false);
+    assert.match(warnings[0] ?? '', /search keys not ensured/);
+    assert.equal(ensureSearchKeys(d), true, 'the writable handle puts it back');
+  } finally {
+    console.warn = warn;
+    readonly.close();
+  }
+  assert.deepEqual(ids('title:thunder'), ['acdc']);
 });
 
 test('a held write lock neither stalls a search nor fails it', () => {
