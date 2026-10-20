@@ -2,10 +2,11 @@
 """web/scripts/verify-library-search.py
 
 Evidence that the Library tab's search box speaks the query language end to
-end: the browse route returns `readsAs`, `queryError` (message, offset, kind)
-and `searched`, and the box shows them — the try-chips on an empty box, the
-query read back in plain words, the plain-text fallback with a marker and a
-quoted suggestion, never feedback for older keystrokes, and the `?` examples.
+end: the browse route returns `readsAs`, `queryError` (message, offset, kind),
+`searched` and `reindexing`, and the box shows them — the try-chips on an empty
+box, the query read back in plain words, the plain-text fallback with a marker
+and a quoted suggestion (only for text that is no query at all), never feedback
+for older keystrokes, and the `?` examples.
 
 Usage: python3 web/scripts/verify-library-search.py
 
@@ -54,6 +55,14 @@ check("route: no reading for plain text", d.get("readsAs") == "")
 err = browse("year:>abc").get("queryError") or {}
 check("route: a wrong value is a meaning error", err.get("kind") == "meaning", json.dumps(err))
 check("route: an empty search has no feedback", browse("").get("searched") == "")
+err = browse("title:/live/ OR title:/remix/").get("queryError") or {}
+check("route: a second regex is a meaning error, not a 500",
+      err.get("kind") == "meaning" and err.get("offset") == 22 and "title:/a|b/" in err.get("message", ""), json.dumps(err))
+err = browse("title:live OR").get("queryError") or {}
+check("route: text that stops mid-query is incomplete", err.get("kind") == "incomplete", json.dumps(err))
+err = browse("year:[1990 TO *]").get("queryError") or {}
+check("route: a query naming a field is never a syntax error", err.get("kind") == "meaning", json.dumps(err))
+check("route: a search says whether its keys are whole", browse("live").get("reindexing") in (True, False))
 
 with sync_playwright() as p:
     browser = p.chromium.launch()
@@ -86,6 +95,12 @@ with sync_playwright() as p:
     text = hint.inner_text()
     check("a wrong value shows its message and no quote suggestion",
           "year takes a number" in text and "as written" not in text, repr(text[:160]))
+
+    box.fill("title:live OR")
+    pg.wait_for_timeout(1200)
+    text = hint.inner_text()
+    check("a half-typed query, after the pause, gets no quote suggestion",
+          "ends early" in text and "as written" not in text, repr(text[:160]))
 
     # Stale feedback: type fast, read at once — nothing may describe older text.
     box.fill("genre:pop")
