@@ -279,20 +279,23 @@ test('a held write lock neither stalls a search nor fails it', () => {
   }
 });
 
-test('genres in every stored shape key like show-filter reads them', () => {
+test('stored lists key as the row reads them, and never throw', () => {
   const d = db.getDb()!;
   const add = d.prepare(`INSERT INTO tracks (id, title, artist, genres, moods, audio_moods) VALUES (?, ?, ?, ?, ?, ?)`);
-  add.run('osub', 'Shape One', null, JSON.stringify([{ name: 'Synth Pop' }, { id: 1 }]), '["neutral"]', null);
+  add.run('osub', 'Shape One', null, JSON.stringify(['Synth Pop', { name: 'Disco' }, { id: 1 }]), '["neutral"]', null);
+  // Valid JSON the generated `genre` column accepts, but not a list.
+  add.run('scalar', 'Shape Two', 'Someone', '"Rock"', '["neutral"]', null);
   add.run('nogenre', 'Shape Three', 'Someone', null, '["neutral"]', '["eerie"]');
   // Untagged, so Browse never lists it, but its keys are still built.
   add.run('untagged', 'Shape Four', 'Someone', null, null, null);
   try {
-    assert.deepEqual(ids('genre:pop title:shape'), ['osub'], 'OpenSubsonic { name } objects');
-    assert.deepEqual(ids('title:shape -genre:pop'), ['nogenre'], 'no genres key as none');
+    assert.deepEqual(ids('genre:pop title:shape'), ['osub'], 'the string entries');
+    assert.deepEqual(ids('genre:disco'), [], 'not an object entry, which rowToTrack drops too');
+    assert.deepEqual(ids('title:shape -genre:pop'), ['nogenre', 'scalar'], 'no genres, or not a list, key as none');
     assert.deepEqual(ids('mood:eerie'), ['nogenre'], 'audio moods are moods');
   } finally {
     assert.equal(d.prepare(`SELECT search_fresh FROM tracks WHERE id = 'untagged'`).pluck().get(), 1);
-    d.prepare(`DELETE FROM tracks WHERE id IN ('osub', 'nogenre', 'untagged')`).run();
+    d.prepare(`DELETE FROM tracks WHERE id IN ('osub', 'scalar', 'nogenre', 'untagged')`).run();
   }
 });
 

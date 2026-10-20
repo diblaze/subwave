@@ -116,19 +116,10 @@ interface SourceRow {
   moods: string | null; audio_moods: string | null; lastfm_tags: string | null;
 }
 
-// As show-filter's trackGenres reads them: the `genres` array, strings or
-// OpenSubsonic `{ name }` objects. Always valid JSON: the generated `genre`
-// column's index makes SQLite refuse anything else on write.
-function genreList(genresJson: string | null): string[] {
-  const parsed: unknown[] = genresJson ? JSON.parse(genresJson) : [];
-  return parsed
-    .map(g => (typeof g === 'string' ? g : String((g as { name?: unknown })?.name ?? '')))
-    .filter(Boolean);
-}
-
-// The key columns in SEARCH_KEY_COLUMNS order.
+// The key columns in SEARCH_KEY_COLUMNS order. Lists read as rowToTrack reads
+// them (safeParseArray: strings only, and a value that is not an array is none).
 function keysOf(r: SourceRow): string[] {
-  const genres = genreList(r.genres);
+  const genres = safeParseArray(r.genres ?? '[]');
   const moods = [...safeParseArray(r.moods ?? '[]'), ...safeParseArray(r.audio_moods ?? '[]')];
   const lastfm = safeParseArray(r.lastfm_tags ?? '[]');
   const artist = r.artist ?? '';
