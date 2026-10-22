@@ -44,6 +44,8 @@ import * as session from './session.js';
 import { withoutStandIns } from './stand-in-policy.js';
 import * as djAgent from './dj-agent.js';
 import * as programme from './programme.js';
+import { showEndHolds } from './show-boundary.js';
+import { handoverOffsetMinutes } from './handover-policy.js';
 import { cleanupOldVoices } from '../audio/tts.js';
 import { cleanupPauseTalkSilence } from '../audio/wav-silence.js';
 import { warmHeavy } from '../audio/ttsHeavyClient.js';
@@ -978,6 +980,7 @@ let lastRoll: { hourKey: string; roll: SessionRoll } | null = null;
 // Whether a row due this minute may fire. The live gates, still owned by their
 // own modules; resolved lazily by the planner for open, unfired rows only.
 function talkEligible(kind: TalkKind, now: Date, rolled: SessionRoll | null): boolean {
+  if (showEndHolds(kind, now.getTime(), handoverOffsetMinutes())) return false;
   if (kind === 'hourly') {
     // A programme intro owns the top of the show's first hour, so the generic
     // time check stands down once it aired (#310). suppressHourly is asked

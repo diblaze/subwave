@@ -167,6 +167,19 @@ export function fadeAtShowEndActive(date = new Date()): boolean {
   return settings.effectiveFadeAtShowEnd(settings.resolveActiveShow(date));
 }
 
+// Idents and jingles name the show on air, so in its last minutes they land on
+// top of its sign-off. Both hold from this many minutes before the sign-off: at
+// fire time (scheduler talkEligible) and again at air time (queue), because a
+// fired ident can wait several tracks for its boundary.
+export const SHOW_END_QUIET_MINUTES = 5;
+const SHOW_END_HELD = new Set(['station-id', 'jingle']);
+
+/** Whether `kind` holds because the show changes within the sign-off offset plus the quiet margin. */
+export function showEndHolds(kind: string, nowMs: number, offsetMinutes: number): boolean {
+  return SHOW_END_HELD.has(kind)
+    && nextShowBoundaryMs(nowMs, (offsetMinutes + SHOW_END_QUIET_MINUTES) * 60) !== null;
+}
+
 /** The next show change at or after `fromMs`, within `horizonSec`. */
 export function nextShowBoundaryMs(fromMs: number, horizonSec: number): number | null {
   const horizon = Math.min(Math.max(0, horizonSec), BOUNDARY_MAX_HORIZON_SEC);
