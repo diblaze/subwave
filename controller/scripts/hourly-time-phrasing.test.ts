@@ -147,6 +147,13 @@ test('no hourly tone mentions light, dark, night, sky, seasons, weather or the o
   assert.deepEqual(ANGLES.hourly.filter((tone) => banned.test(tone)), []);
 });
 
+// The check airs just after the hour, so a tone about the middle of something
+// reads as the middle of the hour: one aired "just after three, and we have
+// just passed halfway into the hour".
+test('no hourly tone points at the middle of the hour', () => {
+  assert.deepEqual(ANGLES.hourly.filter((tone) => /\b(half\w*|middle|midpoint)\b/i.test(tone)), []);
+});
+
 // The same ban applies whether weather is known, unavailable, or missing entirely.
 for (const condition of ['stormy', 'rainy', 'clear', 'unknown', 'absent', 'null']) {
   test(`hourly ${condition} context keeps weather off the prompt and preserves continuity`, async () => {
