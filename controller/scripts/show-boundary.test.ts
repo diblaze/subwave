@@ -24,9 +24,10 @@
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const root = mkdtempSync(join(tmpdir(), 'subwave-showboundary-'));
 process.env.STATE_DIR = root;
@@ -37,6 +38,7 @@ const {
   nextShowChangeMs,
   resolveBoundaryCueSec,
   nextShowBoundaryMs,
+  showEndHolds,
   fadeAtShowEndActive,
   BOUNDARY_TOLERANCE_SEC,
   BOUNDARY_MIN_PLAY_SEC,
@@ -311,6 +313,27 @@ test('the live scan finds the grid boundary at the end of the show', async () =>
     null,
     'an hour mark inside one show is not a boundary',
   );
+});
+
+// Idents and jingles hold from five minutes before the sign-off: a jingle at
+// :56 aired right on top of a :57 handover.
+test('idents and jingles hold in the last minutes before the sign-off', async () => {
+  await seed({ station: true, showFade: null });
+  const at = (h: number, m: number) => Date.UTC(2026, 0, 15, h, m);
+  assert.equal(showEndHolds('jingle', at(10, 56), 3), true, 'one minute before a :57 sign-off');
+  assert.equal(showEndHolds('station-id', at(10, 52), 3), true, 'the first quiet minute');
+  assert.equal(showEndHolds('station-id', at(10, 51), 3), false, 'before the quiet margin');
+  assert.equal(showEndHolds('station-id', at(10, 51), 4), true, 'a longer sign-off offset widens it');
+  assert.equal(showEndHolds('station-id', at(9, 56), 3), false, 'an hour mark inside one show is not an ending');
+  assert.equal(showEndHolds('hourly', at(10, 56), 3), false, 'only idents and jingles hold');
+});
+
+// The policy is only as good as its callers: the scheduler gates firing, and
+// the queue drops an ident that fired earlier but would air inside the window.
+test('the scheduler and the pending-voice path both ask showEndHolds', () => {
+  const src = (f: string) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'broadcast', f), 'utf8');
+  assert.match(src('scheduler.ts'), /function talkEligible[^{]*\{\n {2}if \(showEndHolds\(kind, /);
+  assert.match(src('queue.ts'), /showBoundary\.showEndHolds\(p\.kind, /);
 });
 
 test.after(() => rmSync(root, { recursive: true, force: true }));

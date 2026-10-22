@@ -44,6 +44,7 @@ import { promptRecapEntries, VERBATIM_META } from './prompt-memory.js';
 import { getFullContext, getClockContext, energyForDaypart } from '../context.js';
 import * as settings from '../settings.js';
 import { showKeyAt } from './show-boundary.js';
+import { handoverOffsetMinutes } from './handover-policy.js';
 import { programmeShowKey } from './resume-show.js';
 import { measureClipLevel, trimDbFor } from '../audio/clip-level.js';
 import { TRANSITION_EFFECTS, type TransitionEffect } from '../settings/vocab.js';
@@ -2961,6 +2962,10 @@ class Queue {
     // held again below, so a busy stretch can't keep re-deferring a dead ident.
     if (pendingVoiceStale(p.t, Date.now())) {
       this.dropPendingVoice('waited too long for a track boundary');
+      return;
+    }
+    if (showBoundary.showEndHolds(p.kind, Date.now(), handoverOffsetMinutes())) {
+      this.dropPendingVoice('the show signs off within minutes');
       return;
     }
     // A daypart offered at generation can cross its boundary while the WAV
