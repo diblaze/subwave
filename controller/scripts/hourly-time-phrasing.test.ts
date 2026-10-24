@@ -142,8 +142,8 @@ test('production hourly checks override weather-inviting persona instructions', 
 
 // The ban above overrides tone, but a tone that asks for the dark wins anyway
 // (#2056), so no hourly tone may ask for light, dark or weather.
-test('no hourly tone asks for what the weather rule forbids', () => {
-  const banned = /\b(dark\w*|daylight|twilight|light|sun(light|shine|ny|set|rise)?|sky|weather|seasons?|seasonal|night\w*|dusk|dawn|winter|autumn|summer|rain\w*|snow\w*|frost\w*|fog\w*|moon\w*|outside|outdoors?)\b/i;
+test('no hourly tone mentions light, dark, night, sky, seasons, weather or the outdoors', () => {
+  const banned = /\b(dark\w*|daylight|twilight|starlight|lights?|sun(light|shine|ny|sets?|rises?|down)?|sky|skies|weather|seasons?|seasonal|(mid|to|over)?night\w*|dusk|dawn|spring|summer|autumn|winter|rain\w*|snow\w*|frost\w*|fog\w*|storm\w*|cloud\w*|windy|moon\w*|outside|outdoors?)\b/i;
   assert.deepEqual(ANGLES.hourly.filter((tone) => banned.test(tone)), []);
 });
 
